@@ -1,0 +1,336 @@
+/* ============================================================
+   Haplotype Distribution Explorer — Custom Stylesheet
+   Place this file at:  www/styles.css
+   ============================================================ */
+
+/* ---- Google Fonts fallback (bslib loads them, but just in case) ---- */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Merriweather:wght@400;700&family=Fira+Code&display=swap');
+
+/* ============================================================
+   GLOBAL
+   ============================================================ */
+
+body {
+  background-color: #f4f6f9;
+  color: #1c2b3a;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Subtle animated gradient behind the navbar brand */
+/* PRIMARY COLOR: #154734 (navbar, headers, buttons) */
+.navbar {
+  background: linear-gradient(135deg, #154734 0%, #0f3426 100%) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  padding: 0.5rem 1.5rem;
+}
+
+.navbar-brand {
+  font-family: 'Merriweather', serif;
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: #fff !important;
+}
+
+.nav-link {
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  padding: 0.75rem 1rem !important;
+  transition: color 0.15s ease, border-bottom 0.15s ease;
+  border-bottom: 3px solid transparent;
+}
+
+.nav-link:hover,
+.nav-link.active {
+  color: #fff !important;
+  border-bottom: 3px solid #FFB81C;
+}
+
+/* ============================================================
+   SIDEBAR
+   ============================================================ */
+
+.bslib-sidebar-layout > .sidebar {
+  background: #ffffff;
+  border-right: 1px solid #e2e8f0;
+  padding: 1.25rem 1rem;
+  box-shadow: 2px 0 6px rgba(0, 0, 0, 0.04);
+}
+
+.sidebar-section-header {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 0.6rem;
+  margin-top: 0.25rem;
+}
+
+.sidebar-divider {
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  margin: 1rem 0;
+}
+
+/* ============================================================
+   CARDS
+   ============================================================ */
+
+.card {
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 0.65rem !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06) !important;
+  background: #ffffff;
+  transition: box-shadow 0.2s ease;
+}
+
+.card:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.10) !important;
+}
+
+.card-header {
+  background: #f8fafc !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #154734;
+  border-radius: 0.65rem 0.65rem 0 0 !important;
+  padding: 0.75rem 1.1rem;
+}
+
+.map-card {
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.map-card .card-body {
+  padding: 0 !important;
+}
+
+.controls-card {
+  height: fit-content;
+}
+
+.about-card {
+  max-width: 760px;
+  margin: 2rem auto;
+}
+
+.about-card h4,
+.about-card h5 {
+  color: #154734;
+  margin-top: 1.25rem;
+}
+
+/* ============================================================
+   FORM CONTROLS
+   ============================================================ */
+
+.form-label,
+label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 0.3rem;
+}
+
+.form-control,
+.form-select {
+  border: 1px solid #d1d5db;
+  border-radius: 0.4rem;
+  font-size: 0.85rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.form-control:focus,
+.form-select:focus {
+  border-color: #154734;
+  box-shadow: 0 0 0 3px rgba(21, 71, 52, 0.18);
+  outline: none;
+}
+
+/* Radio buttons — pill style */
+/* PRIMARY COLOR: #154734 */
+.form-check-input[type="radio"] {
+  border-color: #154734;
+}
+.form-check-input[type="radio"]:checked {
+  background-color: #154734;
+  border-color: #154734;
+}
+
+/* Slider — PRIMARY COLOR: #154734 */
+.irs--shiny .irs-bar,
+.irs--shiny .irs-from,
+.irs--shiny .irs-to,
+.irs--shiny .irs-single {
+  background: #154734 !important;
+  border-color: #154734 !important;
+}
+
+.irs--shiny .irs-handle {
+  border-color: #154734 !important;
+}
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+
+/* PRIMARY COLOR: #154734 (buttons, interactive elements) */
+.btn-primary {
+  background: #154734;
+  border-color: #154734;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.btn-primary:hover {
+  background: #0f3426;
+  border-color: #0f3426;
+  transform: translateY(-1px);
+}
+
+.btn-outline-primary {
+  color: #154734;
+  border-color: #154734;
+  font-weight: 500;
+}
+
+.btn-outline-primary:hover {
+  background: #154734;
+  color: #fff;
+}
+
+/* Download button in lit table header */
+#download_lit {
+  font-size: 0.78rem;
+  padding: 0.25rem 0.7rem;
+}
+
+/* ============================================================
+   SAMPLE COUNT BADGE & ALERTS
+   ============================================================ */
+
+/* ACCENT COLOR: #FFB81C (highlights, badges) */
+.sample-count-badge {
+  display: inline-block;
+  background: #fff4e6;
+  color: #b87e00;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.3rem 0.65rem;
+  border-radius: 2rem;
+  margin-bottom: 0.25rem;
+  border: 1px solid #ffd699;
+}
+
+.help-text {
+  font-size: 0.78rem;
+  color: #64748b;
+  line-height: 1.5;
+  margin-top: 0.75rem;
+}
+
+.alert-warning {
+  background: #fff8ec;
+  border-color: #fbbf24;
+  color: #92400e;
+  font-size: 0.8rem;
+  border-radius: 0.4rem;
+}
+
+/* ============================================================
+   LITERATURE TABLE  (DT)
+   ============================================================ */
+
+/* PRIMARY COLOR: #154734 (table headers) */
+table.dataTable thead th {
+  background: #154734 !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  font-size: 0.82rem;
+  letter-spacing: 0.03em;
+  border-bottom: none !important;
+}
+
+table.dataTable tbody tr:hover {
+  background: #eef6fb !important;
+}
+
+table.dataTable.table-striped tbody tr:nth-child(odd) {
+  background: #f8fbfd;
+}
+
+.dt-buttons .btn {
+  font-size: 0.78rem;
+  border-radius: 0.35rem;
+  border: 1px solid #d1d5db;
+  margin-right: 3px;
+  background: #fff;
+  color: #374151;
+}
+
+.dt-buttons .btn:hover {
+  background: #f1f5f9;
+}
+
+/* ============================================================
+   LOADING SPINNER  (shinycssloaders)
+   ============================================================ */
+
+.shiny-spinner-output-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ============================================================
+   LEAFLET — override border on map tiles
+   ============================================================ */
+
+.leaflet-container {
+  border-radius: 0 0 0.65rem 0.65rem;
+  font-family: 'Inter', sans-serif !important;
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: 0.5rem !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15) !important;
+  font-family: 'Inter', sans-serif !important;
+}
+
+.leaflet-popup-tip {
+  box-shadow: none !important;
+}
+
+/* ============================================================
+   VISNETWORK
+   ============================================================ */
+
+.vis-network {
+  border: none !important;
+  border-radius: 0 0 0.65rem 0.65rem;
+}
+
+/* ============================================================
+   RESPONSIVE TWEAKS
+   ============================================================ */
+
+@media (max-width: 768px) {
+  .bslib-sidebar-layout {
+    flex-direction: column !important;
+  }
+
+  .bslib-sidebar-layout > .sidebar {
+    width: 100% !important;
+    border-right: none;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .navbar-brand span {
+    font-size: 0.95rem;
+  }
+}

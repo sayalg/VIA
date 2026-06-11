@@ -509,7 +509,7 @@ VPY5_India,PP469559,VPY5,2019,India,Major,Native,NA,NA,NA,NA,Hap1,NA,NA,NA
 CUMM40_India,MW549046,CUMM40,2020,India,Major,Native,11.8014,76.0044,Kerala,Mananthavady,Hap1,Urban,NA,NA
 IND(stephensi)COXI_India,OQ847826,IND(stephensi)COXI,2022,India,Major,Native,NA,NA,Maharashtra,NA,NA,NA,NA,NA
 A13668_India,DQ317594,A13668,NA,India,NA,Native,NA,NA,Tamil Nadu,Pattukottai,NA,NA,Well,Immature
-MOSQ02-16_India,KX467337,MOSQ02-16,NA,India,Major,Native,NA,NA,NA,NA,Hap1,NA,NA,Adult
+MOSQ02_16_India,KX467337,MOSQ02-16,NA,India,Major,Native,NA,NA,NA,NA,Hap1,NA,NA,Adult
 SRX11563275_India,SRR15293894,SRX11563275,NA,India,Major,Native,NA,NA,Karnataka,Mangalore,Hap1,NA,Lab strain,Adult
 SRX11563276_India,SRR15293893,SRX11563276,NA,India,Major,Native,NA,NA,Karnataka,Mangalore,Hap1,NA,Lab strain,Adult
 SRX11563277_India,SRR15293892,SRX11563277,NA,India,Major,Native,NA,NA,Karnataka,Mangalore,Hap1,NA,Lab strain,Adult
@@ -626,7 +626,7 @@ KECDNE_Wajir_Kenya,PQ529980,KECDNE_Wajir,2024,Kenya,Major,Invasive,NA,NA,Wajir,N
 KECDNG_Wajir_Kenya,PQ529966,KECDNG_Wajir,2024,Kenya,Major,Invasive,NA,NA,Wajir,NA,Hap2,NA,NA,Immature
 KECDNI_Wajir_Kenya,PQ529961,KECDNI_Wajir,2024,Kenya,Major,Invasive,NA,NA,Wajir,NA,Hap2,NA,NA,Immature
 KECDNJ_Wajir_Kenya,PQ529982,KECDNJ_Wajir,2024,Kenya,Major,Invasive,NA,NA,Wajir,NA,Hap2,NA,NA,Immature
-KECDOD_Wajir _Kenya,PQ529975,KECDOD_Wajir ,2024,Kenya,Major,Invasive,NA,NA,Wajir,NA,Hap2,NA,NA,Immature
+KECDOD_Wajir_Kenya,PQ529975,KECDOD_Wajir ,2024,Kenya,Major,Invasive,NA,NA,Wajir,NA,Hap2,NA,NA,Immature
 KECDOE_Wajir_Kenya,PQ529940,KECDOE_Wajir,2024,Kenya,Major,Invasive,NA,NA,Wajir,NA,Hap2,NA,NA,Immature
 KECDOF_Wajir_Kenya,PQ529976,KECDOF_Wajir,2024,Kenya,Major,Invasive,NA,NA,Wajir,NA,Hap2,NA,NA,Immature
 KECDOG_Wajir_Kenya,PQ529981,KECDOG_Wajir,2024,Kenya,Major,Invasive,NA,NA,Wajir,NA,Hap2,NA,NA,Immature
