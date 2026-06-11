@@ -1,8 +1,8 @@
-# Haplotype Distribution Map — README
+# VIA: Vector Invasion Atlas
 
 ## Overview
 
-This is an interactive R Shiny web application that displays haplotype distribution data on a world map using pie chart markers. It supports filtering by year and overlays country-level native/invasive status.
+This is an interactive R Shiny web application that displays haplotype distribution data on a world map using pie chart markers, phylogenetic tree inferences, transmission networks, and central hub for *An. stephensi* related literature.
 
 ---
 
