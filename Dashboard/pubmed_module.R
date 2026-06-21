@@ -380,7 +380,7 @@ pubBrowserServer <- function(id) {
       status("loading")
       pub_data(NULL)
       tryCatch({
-        ids <- .fetch_pubmed_ids("Anopheles stephensi[Title/Abstract]", 500)
+        ids <- .fetch_pubmed_ids("Anopheles stephensi[Title]", 500)
         if (length(ids) == 0) { status("error"); return() }
         df  <- .fetch_pubmed_details(ids)
         if (nrow(df) == 0)    { status("error"); return() }
