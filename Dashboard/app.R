@@ -1,7 +1,3 @@
-# ================================================================================
-# Haplotype Distribution Explorer — Multi-Tab Shiny App
-# ================================================================================
-
 # ---- Packages ----
 library(shiny)
 library(bslib)
@@ -19,7 +15,6 @@ library(visNetwork)
 library(DT)
 library(ape)
 library(ggplot2)
-library(ggtree)
 library(strainhub)
 library(stringr)
 library(treeio)
@@ -34,8 +29,11 @@ MAPBOX_TOKEN      <- "pk.eyJ1Ijoic2F5YWxnIiwiYSI6ImNtaWdha3Y4eDA1YmczZXEybjZvZjE
 MAPBOX_STYLE      <- "https://api.mapbox.com/styles/v1/sayalg/cmkr2q0c3000q01s87umrehau/tiles/256/{z}/{x}/{y}@2x?access_token={accessToken}"
 INVALID_LOCATIONS <- c("Laboratory")
 
+METADATA_PATH <- "../Input_Files/FinalCOI_metadata_w_coor.csv"
+TREE_PATH     <- "../RAXML/COI_subsampled20_per_country_year.aligned.raxml.bestTree"
+
 # ================================================================================
-# DATA LOADING
+# DATA LOADING  (runs once per R process, shared by all sessions)
 # ================================================================================
 
 samples_df <- read.csv("../Input_Files/FinalCOI_metadata.csv", sep = ",", header = TRUE)
@@ -90,11 +88,15 @@ fill_missing_coords <- function(df,
     select(-row_id)
 }
 
-# Load pre-geocoded file (run fill_missing_coords() offline to regenerate)
-# df_geo <- fill_missing_coords(samples_df)
-# write.csv(df_geo, "../Input_Files_Latest/FinalCOI_metadata_w_coor.csv", row.names = FALSE)
-df_geo   <- read.csv("../Input_Files/FinalCOI_metadata_w_coor.csv", sep = ",", header = TRUE)
+# Map data: loaded with base read.csv to match v2 semantics exactly (empty
+# strings are kept as "", not coerced to NA).
+df_geo   <- read.csv(METADATA_PATH, sep = ",", header = TRUE)
 df_haplo <- df_geo %>% filter(!is.na(Haplotype))
+
+# Network data: loaded ONCE with readr::read_csv (empty strings -> NA), matching
+# v2's per-render reads. This single object is shared by BOTH network builders
+# below, replacing the two separate disk reads v2 performed on every render.
+metadata_full <- readr::read_csv(METADATA_PATH, col_names = TRUE, show_col_types = FALSE)
 
 # ---- Cached world polygons (loaded once) ----
 world_polygons <- ne_countries(returnclass = "sf") %>%
@@ -155,6 +157,10 @@ create_haplotype_palette <- function(data, category_col = "Haplotype") {
   setNames(as.character(colors), all_haplotypes)
 }
 
+# Palette depends only on static data, so compute it once at startup rather than
+# once per session.
+haplotype_palette <- create_haplotype_palette(df_haplo, category_col = "Haplotype")
+
 # ================================================================================
 # MAP FUNCTIONS
 # ================================================================================
@@ -176,7 +182,29 @@ create_base_map <- function(tile_size = 256) {
       options       = layersControlOptions(collapsed = FALSE)
     ) %>%
     hideGroup("Railways") %>%
-    hideGroup("Shipping Routes")
+    hideGroup("Shipping Routes") %>%
+    onRender("
+      function(el, x) {
+        var map = this;
+        var attached = {};
+        // Poll for freshly-drawn minicharts and wire a click handler to each.
+        // Charts are re-drawn whenever the temporal filter changes, so the
+        // interval keeps running, but it only touches charts it hasn't seen.
+        map._minichartClickPoll = setInterval(function() {
+          if (!map._minicharts) return;
+          map._minicharts.forEach(function(chart) {
+            var layerId = chart.options.layerId;
+            if (!layerId || attached[layerId]) return;
+            var chartEl = chart._container;
+            if (!chartEl) return;
+            attached[layerId] = true;
+            chartEl.addEventListener('click', function(e) {
+              Shiny.setInputValue('map_marker_click', {id: layerId}, {priority: 'event'});
+            }, false);
+          });
+        }, 500);
+      }
+    ")
 }
 
 add_pie_markers <- function(map, data,
@@ -296,6 +324,21 @@ add_pie_markers <- function(map, data,
       )
   }
 
+  # Add invisible markers on top of pie charts to capture clicks
+  map_with_charts <- map_with_charts %>%
+    addMarkers(
+      lng      = coords[[lon_col]],
+      lat      = coords[[lat_col]],
+      layerId  = layer_ids,
+      popup    = unname(popup_html),
+      icon     = makeIcon(
+        iconUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        iconWidth = 60,
+        iconHeight = 60
+      ),
+      options = markerOptions(opacity = 0, zIndexOffset = 1000)
+    )
+
   map_with_charts
 }
 
@@ -400,20 +443,181 @@ add_railway_layer <- function(map, railways = africa_railways) {
     )
 }
 
-add_shipping_layer <- function(map, routes_sf) {
+add_shipping_layer <- function(map, routes_sf, highlight_location = NULL) {
   map <- clearGroup(map, "Shipping Routes")
   if (is.null(routes_sf) || nrow(routes_sf) == 0) return(map)
 
-  map %>%
-    addMapPane("shipping", zIndex = 250) %>%
-    addPolylines(
-      data    = routes_sf,
-      color   = "#0077b6",
-      weight  = 1,
-      opacity = 0.4,
-      group   = "Shipping Routes",
-      options = pathOptions(pane = "shipping")
+  # Add the map pane
+  map <- map %>% addMapPane("shipping", zIndex = 250)
+
+  if (!is.null(highlight_location) && highlight_location != "") {
+    # Split routes into highlighted and non-highlighted
+    routes_sf$is_highlighted <- (routes_sf$from == highlight_location |
+                                   routes_sf$to == highlight_location)
+
+    # Add non-highlighted routes first (low opacity)
+    non_highlighted <- routes_sf[!routes_sf$is_highlighted, ]
+    if (nrow(non_highlighted) > 0) {
+      map <- map %>%
+        addPolylines(
+          data    = non_highlighted,
+          color   = "#0077b6",
+          weight  = 1,
+          opacity = 0.1,
+          group   = "Shipping Routes",
+          options = pathOptions(pane = "shipping")
+        )
+    }
+
+    # Add highlighted routes on top (high opacity)
+    highlighted <- routes_sf[routes_sf$is_highlighted, ]
+    if (nrow(highlighted) > 0) {
+      map <- map %>%
+        addPolylines(
+          data    = highlighted,
+          color   = "#d62728",
+          weight  = 2.5,
+          opacity = 0.85,
+          group   = "Shipping Routes",
+          options = pathOptions(pane = "shipping")
+        )
+    }
+  } else {
+    # No selection: show all routes with default styling
+    map <- map %>%
+      addPolylines(
+        data    = routes_sf,
+        color   = "#0077b6",
+        weight  = 1,
+        opacity = 0.4,
+        group   = "Shipping Routes",
+        options = pathOptions(pane = "shipping")
+      )
+  }
+
+  map
+}
+
+# ================================================================================
+# NETWORK BUILDERS  (lazy, memoised once per process, shared across sessions)
+# ================================================================================
+# v2 recomputed both networks inside their renderVisNetwork callbacks, which
+# meant re-reading CSVs from disk, re-parsing the tree, running the parsimony
+# reconstruction (make_transnet) and the matrix maths on EVERY session. None of
+# that depends on user input, so here we compute each network's node/edge data
+# exactly once and cache it in an app-level environment.
+
+.app_cache <- new.env(parent = emptyenv())
+
+# ---- Panel 1: Strainhub country transmission network ----
+build_haplo_network_data <- function() {
+  if (!is.null(.app_cache$haplo_net)) return(.app_cache$haplo_net)
+
+  result <- tryCatch({
+    treedata <- ape::read.tree(TREE_PATH)
+    metadata <- metadata_full   # reuse the already-loaded metadata
+
+    ## Adjust column names
+    names(metadata)[names(metadata) == "FASTA.ID"]     <- "Accession"
+    names(metadata)[names(metadata) == "Accession.ID"] <- "Unique"
+
+    ## Prune Tree
+    taxa_without_data <- setdiff(treedata$tip.label, metadata$Accession)
+    pruned_tree <- tidytree::drop.tip(treedata, taxa_without_data)
+
+    ## Create Country with Haplotype column
+    metadata$haplo_concat <- paste(metadata$Country, metadata$Haplotype, sep = "_")
+
+    ## Make the Transmission Network
+    graph <- make_transnet(pruned_tree,
+                           metadata,
+                           columnSelection  = "Country",
+                           centralityMetric = 3,   # Betweenness Centrality
+                           treeType         = "parsimonious")
+
+    nodes <- graph$x$nodes %>%
+      mutate(shape = "dot",
+             color = "grey",
+             font.size = 35)
+
+    edges <- graph$x$edges %>%
+      left_join(nodes %>% select(id, group), by = c("from" = "id")) %>%
+      rename(group_from = group) %>%
+      left_join(nodes %>% select(id, group), by = c("to" = "id")) %>%
+      rename(group_to = group) %>%
+      mutate(arrows = "to",
+             smooth = TRUE,
+             color  = "black",
+             width  = case_when(value == 1 ~ 1, value == 2 ~ 5, value == 3 ~ 20),
+             value  = NULL,
+             length = 500)
+
+    list(nodes = nodes, edges = edges)
+  }, error = function(e) {
+    warning("build_haplo_network_data() failed: ", conditionMessage(e))
+    NULL
+  })
+
+  .app_cache$haplo_net <- result
+  result
+}
+
+# ---- Panel 2: Country connectivity (shared haplotypes) network ----
+build_country_network_data <- function() {
+  if (!is.null(.app_cache$country_net)) return(.app_cache$country_net)
+
+  result <- tryCatch({
+    # Clean metadata (reuse the already-loaded object)
+    metadata_clean_cn <- metadata_full %>%
+      filter(!is.na(Country) & Country != "" & Country != "NA") %>%
+      filter(!is.na(Haplotype) & Haplotype != "" & Haplotype != "NA")
+
+    # Random subsampling (20 per Country/Year)
+    set.seed(123)
+    metadata_subsampled_cn <- metadata_clean_cn %>%
+      group_by(Country, Year) %>%
+      slice_sample(n = 20) %>%
+      ungroup()
+
+    # Binary haplotype matrix
+    h_matrix_raw    <- table(metadata_subsampled_cn$Haplotype, metadata_subsampled_cn$Country)
+    h_matrix_binary <- h_matrix_raw
+    h_matrix_binary[h_matrix_binary > 0] <- 1
+
+    # Shared unique haplotype count between countries
+    country_matrix <- as.matrix(t(h_matrix_binary) %*% h_matrix_binary)
+    diag(country_matrix) <- 0
+
+    # Nodes
+    country_totals_cn <- metadata_subsampled_cn %>%
+      group_by(Country) %>%
+      summarize(n = n(), .groups = "drop")
+
+    nodes_country <- data.frame(
+      id    = seq_len(nrow(country_totals_cn)),
+      label = country_totals_cn$Country,
+      group = country_totals_cn$Country,
+      value = country_totals_cn$n,
+      title = paste("Included Samples:", country_totals_cn$n)
     )
+
+    # Edges (upper triangle only)
+    edges_idx <- which(country_matrix > 0, arr.ind = TRUE)
+    edges_idx <- edges_idx[edges_idx[, 1] < edges_idx[, 2], , drop = FALSE]
+    links_country <- data.frame(
+      from  = edges_idx[, 1],
+      to    = edges_idx[, 2],
+      value = country_matrix[edges_idx]
+    )
+
+    list(nodes = nodes_country, links = links_country)
+  }, error = function(e) {
+    warning("build_country_network_data() failed: ", conditionMessage(e))
+    NULL
+  })
+
+  .app_cache$country_net <- result
+  result
 }
 
 # ================================================================================
@@ -447,8 +651,8 @@ app_theme <- bs_theme(
 
 ui <- page_navbar(
   title = tags$span(
-    tags$img(src = "logo.png", height = "32px", style = "margin-right:10px;vertical-align:middle"),
-    "AnStep Atlas"
+    tags$img(src = "logo.png", height = "100px", style = "margin-right:10px;vertical-align:middle"),
+    "The Vector Invasion Atlas"
   ),
   theme    = app_theme,
   id       = "main_nav",
@@ -459,7 +663,7 @@ ui <- page_navbar(
     tags$link(rel = "stylesheet", type = "text/css", href = "styles.css"),
     tags$link(rel = "icon", type = "image/png", href = "favicon.png")
   ),
-  
+
   # ---- Gene selector (top-right of navbar) -----------------------------------
   nav_item(
     tags$div(
@@ -487,7 +691,7 @@ ui <- page_navbar(
         open  = TRUE,
 
         tags$div(class = "sidebar-section-header", "Temporal Filter"),
-        
+
         radioButtons(
           "time_mode", label = NULL,
           choices  = c("Exact Year"   = "exact",
@@ -496,7 +700,7 @@ ui <- page_navbar(
                        "All Years"    = "all"),
           selected = "all"
         ),
-        
+
         conditionalPanel(
           condition = "input.time_mode === 'exact' || input.time_mode === 'cumulative'",
           sliderInput(
@@ -509,7 +713,7 @@ ui <- page_navbar(
             animate = animationOptions(interval = 1000, loop = FALSE)
           )
         ),
-        
+
         conditionalPanel(
           condition = "input.time_mode === 'range'",
           sliderInput(
@@ -546,40 +750,31 @@ ui <- page_navbar(
     value = "tree_tab",
     layout_columns(
       col_widths = c(3, 9),
-      # Left: controls
+
+      # Left: info card (update description as needed)
       card(
-        card_header(tags$span(icon("sliders"), " Tree Options")),
+        card_header(tags$span(icon("circle-info"), " About this Tree")),
         class = "controls-card",
-        selectInput(
-          "tree_layout", "Layout:",
-          choices  = c("Rectangular" = "rectangular",
-                       "Circular"    = "circular"),
-          selected = "rectangular"
-        ),
-        checkboxInput("tree_show_labels",  "Show tip labels",   value = TRUE),
-        checkboxInput("tree_show_support", "Show node support", value = FALSE),
-        # Tip color mode — replaces single checkbox
-        radioButtons(
-          "tree_color_by",
-          "Color tips by:",
-          choices  = c("None"      = "none",
-                       "Country"   = "country",
-                       "Haplotype" = "haplotype"),
-          selected = "country"
-        ),
-        hr(class = "sidebar-divider"),
         tags$p(class = "help-text",
-               icon("circle-info"),
-               " Tip colors correspond to selected grouping.")
+               "Maximum likelihood phylogenetic tree of", tags$em("Anopheles stephensi"),
+               "COI haplotypes inferred with RAxML. Tree is hosted and visualised
+              interactively via iTOL. Use the iTOL toolbar to zoom, collapse clades,
+              and export the figure.")
       ),
-      # Right: tree plot
+
+      # Right: iTOL interactive viewer
       card(
         full_screen = TRUE,
-        card_header("RAxML Maximum Likelihood Tree — COI"),
-        withSpinner(
-          plotlyOutput("phylo_tree", height = "700px"),
-          color = "#1a4f72"
-        )
+        card_header(
+          "iTOL — COI Maximum Likelihood Tree",
+          tags$a(
+            href     = "tree.svg",
+            download = "anopheles_stephensi_tree.svg",
+            class    = "btn btn-sm btn-outline-primary float-end",
+            icon("download"), " Download SVG"
+          )
+        ),
+        tags$img(src = "tree.svg", width = "100%", style = "height:700px; object-fit:contain;")
       )
     )
   ),
@@ -661,7 +856,7 @@ ui <- page_navbar(
           tags$h5("Data"),
           tags$p(
             "Sequences were aligned with MAFFT and haplotypes were inferred from previous findings. ",
-            "Phylogenetic inference was performed with RAxML. ", "Scripts available here: ", tags$a(href= "https://github.com/sayalg/AnStep_Atlas", "https://github.com/sayalg/AnStep_Atlas")
+            "Phylogenetic inference was performed with RAxML. ", "Scripts available here: ", tags$a(href= "https://github.com/sayalg/VIA", "https://github.com/sayalg/VIA")
           ),
           tags$h5("Contact"),
           # TODO: update with your actual contact info
@@ -684,9 +879,6 @@ ui <- page_navbar(
 
 server <- function(input, output, session) {
 
-  # ---- Palette (computed once) ----
-  haplotype_palette <- create_haplotype_palette(df_haplo, category_col = "Haplotype")
-
   # ---- Update slider range from actual data ----
   available_years <- df_haplo %>%
     filter(!is.na(Year)) %>%
@@ -704,6 +896,16 @@ server <- function(input, output, session) {
                     max   = max(available_years),
                     value = c(min(available_years), max(available_years))
   )
+
+  # Track selected location for shipping route highlighting
+  selected_location <- reactiveVal(NULL)
+
+  # Create city-to-country mapping
+  city_to_country <- df_haplo %>%
+    filter(!is.na(City.Town), !is.na(Country)) %>%
+    select(City.Town, Country) %>%
+    distinct() %>%
+    deframe()
 
   # ==============================================================================
   # TAB 1 — MAP
@@ -789,16 +991,38 @@ server <- function(input, output, session) {
     add_chart_interactions(proxy)
   })
 
+  # Handle pie chart clicks via invisible markers
+  observeEvent(input$map_marker_click, {
+    click <- input$map_marker_click
+    if (is.null(click) || is.null(click$id)) {
+      selected_location(NULL)
+    } else {
+      clicked_city <- click$id
+      # Convert city name to country
+      country <- city_to_country[clicked_city]
+      if (!is.na(country)) {
+        selected_location(country)
+      }
+    }
+  })
+
+  # Reset on empty map click
+  observeEvent(input$map_click, {
+    if (is.null(input$map_click$id)) {
+      selected_location(NULL)
+    }
+  }, ignoreInit = TRUE)
+
   # Update shipping routes layer when year filter changes
   filtered_shipping_sf <- reactive({
     if (is.null(shipping_routes_by_year) || length(shipping_years) == 0) return(NULL)
 
     target_years <- switch(input$time_mode,
-      "exact"      = shipping_years[shipping_years == input$year_filter],
-      "cumulative" = shipping_years[shipping_years <= input$year_filter],
-      "range"      = shipping_years[shipping_years >= input$year_range[1] &
-                                    shipping_years <= input$year_range[2]],
-      "all"        = shipping_years
+                           "exact"      = shipping_years[shipping_years == input$year_filter],
+                           "cumulative" = shipping_years[shipping_years <= input$year_filter],
+                           "range"      = shipping_years[shipping_years >= input$year_range[1] &
+                                                           shipping_years <= input$year_range[2]],
+                           "all"        = shipping_years
     )
 
     keys <- intersect(as.character(target_years), names(shipping_routes_by_year))
@@ -807,177 +1031,61 @@ server <- function(input, output, session) {
     do.call(rbind, shipping_routes_by_year[keys])
   })
 
+  # Redraw base routes only when filter changes
   observe({
-    add_shipping_layer(leafletProxy("map"), filtered_shipping_sf())
+    routes <- filtered_shipping_sf()
+    map <- leafletProxy("map") %>%
+      clearGroup("Shipping Routes") %>%
+      clearGroup("Shipping Highlight")
+    if (is.null(routes) || nrow(routes) == 0) return()
+    map %>%
+      addMapPane("shipping", zIndex = 250) %>%
+      addPolylines(
+        data    = routes,
+        color   = "#0077b6",
+        weight  = 1,
+        opacity = 0.4,
+        group   = "Shipping Routes",
+        options = pathOptions(pane = "shipping")
+      )
+  })
+
+  # Update highlight layer only when selection changes
+  observe({
+    routes   <- filtered_shipping_sf()
+    location <- selected_location()
+    leafletProxy("map") %>% clearGroup("Shipping Highlight")
+    if (is.null(routes) || is.null(location) || location == "") return()
+    highlighted <- routes[routes$from == location | routes$to == location, ]
+    if (nrow(highlighted) == 0) return()
+    leafletProxy("map") %>%
+      addPolylines(
+        data    = highlighted,
+        color   = "#d62728",
+        weight  = 2.5,
+        opacity = 0.85,
+        group   = "Shipping Highlight",
+        options = pathOptions(pane = "shipping")
+      )
   })
 
   # ==============================================================================
   # TAB 2 — PHYLOGENETIC TREE
   # ==============================================================================
 
-  output$phylo_tree <- renderPlotly({
-    tree_path <- "../RAXML/COI_subsampled20_per_country_year.aligned.raxml.bestTree"
-    
-    tree <- ape::read.tree(tree_path)
-    
-    layout_name <- switch(input$tree_layout,
-                          "rectangular" = "rectangular",
-                          "circular"    = "circular"
-    )
-    
-    # Get tree coordinates directly from ggtree
-    tree_df <- ggtree(tree, layout = layout_name)$data
-    
-    # Join metadata
-    meta <- df_haplo %>% select(FASTA.ID, Country, Haplotype) %>% distinct()
-    tree_df <- tree_df %>% left_join(meta, by = c("label" = "FASTA.ID"))
-    
-    tips  <- tree_df %>% filter(isTip == TRUE)
-    nodes <- tree_df %>% filter(isTip == FALSE)
-    
-    # Color column
-    color_by <- if (input$tree_color_by == "country")   tips$Country
-    else if (input$tree_color_by == "haplotype") tips$Haplotype
-    else NULL
-    
-    # Build edge traces (branches)
-    edge_traces <- lapply(1:nrow(tree$edge), function(i) {
-      parent <- tree_df[tree_df$node == tree$edge[i, 1], ]
-      child  <- tree_df[tree_df$node == tree$edge[i, 2], ]
-      list(
-        x    = c(parent$x, child$x, NA),
-        y    = c(parent$y, child$y, NA),
-        type = "scatter", mode = "lines",
-        line = list(color = "#2e86ab", width = 0.8),
-        hoverinfo = "none", showlegend = FALSE
-      )
-    })
-    
-    pl <- plot_ly()
-    
-    # Add branches
-    for (tr in edge_traces) {
-      pl <- pl %>% add_trace(
-        x = tr$x, y = tr$y,
-        type = "scatter", mode = "lines",
-        line = list(color = "#2e86ab", width = 0.8),
-        hoverinfo = "none", showlegend = FALSE
-      )
-    }
-    
-    # Add tip points
-    if (!is.null(color_by)) {
-      tips$color_group <- color_by
-      for (grp in unique(color_by)) {
-        grp_tips <- tips %>% filter(color_group == grp)
-        grp_hover <- paste0("ID: ", grp_tips$label, "<br>", input$tree_color_by, ": ", grp)
-        pl <- pl %>% add_trace(
-          x    = grp_tips$x, y = grp_tips$y,
-          type = "scatter", mode = "markers",
-          marker = list(size = 6),
-          name   = grp,
-          text   = grp_hover, hoverinfo = "text"
-        )
-      }
-    } else {
-      pl <- pl %>% add_trace(
-        x = tips$x, y = tips$y,
-        type = "scatter", mode = "markers",
-        marker = list(size = 6, color = "#1a4f72"),
-        text = paste0("ID: ", tips$label), hoverinfo = "text",
-        showlegend = FALSE
-      )
-    }
-    
-    # Add tip labels
-    if (input$tree_show_labels) {
-      pl <- pl %>% add_annotations(
-        x = tips$x, y = tips$y,
-        text      = tips$label,
-        showarrow = FALSE,
-        xanchor   = "left",
-        xshift    = 6,
-        font      = list(size = 8, color = "#333")
-      )
-    }
-    
-    # Add node support labels
-    if (input$tree_show_support) {
-      pl <- pl %>% add_annotations(
-        x = nodes$x, y = nodes$y,
-        text      = nodes$label,
-        showarrow = FALSE,
-        xanchor   = "right",
-        font      = list(size = 7, color = "#c0392b")
-      )
-    }
-    
-    pl %>% layout(
-      xaxis      = list(title = "", showgrid = FALSE, zeroline = FALSE),
-      yaxis      = list(title = "", showgrid = FALSE, zeroline = FALSE),
-      dragmode   = "zoom",
-      hoverlabel = list(bgcolor = "white"),
-      plot_bgcolor  = "white",
-      paper_bgcolor = "white"
-    ) %>%
-      config(
-        scrollZoom             = TRUE,
-        displaylogo            = FALSE,
-        modeBarButtonsToRemove = c("lasso2d", "select2d")
-      )
-  })
+    # Tree rendered from iTOL in utility section
 
   # ==============================================================================
   # TAB 3, PANEL 1 — STRAINHUB NETWORK
   # ==============================================================================
+  # Node/edge data is memoised in build_haplo_network_data(); only the (cheap)
+  # visNetwork assembly happens per render.
 
   output$haplo_network <- renderVisNetwork({
+    net <- build_haplo_network_data()
+    validate(need(!is.null(net), "Transmission network could not be built."))
 
-    # --- Minimal placeholder network ---
-    treedata <- ape::read.tree("../RAXML/COI_subsampled20_per_country_year.aligned.raxml.bestTree")
-    metadata <- readr::read_csv("../Input_Files/FinalCOI_metadata_w_coor.csv", col_names = TRUE)
-    
-    ## Adjust column names
-    names(metadata)[names(metadata) == "FASTA.ID"] <- "Accession"
-    names(metadata)[names(metadata) == "Accession.ID"] <- "Unique"
-    
-    ## Prune Tree
-    taxa_without_data <- setdiff(treedata$tip.label, metadata$Accession)
-    pruned_tree <- tidytree::drop.tip(treedata, taxa_without_data)
-    
-    ## Create Country with Haplotype column
-    metadata$haplo_concat <- paste(metadata$Country, metadata$Haplotype, sep = "_")
-    
-    ## Make the Transmission Network
-    graph <- make_transnet(pruned_tree,
-                           metadata,
-                           columnSelection = "Country",
-                           # columnSelection = "haplo_concat",
-                           centralityMetric = 3, #Betweenness Centrality
-                           treeType = "parsimonious")
-    
-    ###############################################################################
-    # Customize Strainhub Network Graph
-    ###############################################################################
-    
-    nodes <- graph$x$nodes %>%
-      mutate(shape = "dot",
-             color = "grey",
-             font.size = 35)
-    
-    edges <- graph$x$edges %>%
-      left_join(nodes %>% select(id, group), by = c("from" = "id")) %>% 
-      rename(group_from = group) %>% 
-      left_join(nodes %>% select(id, group), by = c("to" = "id")) %>% 
-      rename(group_to = group) %>% 
-      mutate(arrows = "to",
-             smooth = TRUE,
-             color = "black",
-             width = case_when(value == 1 ~ 1, value == 2 ~ 5, value == 3 ~ 20),
-             value = NULL,
-             length = 500)
-    
-    visNetwork(nodes, edges,
+    visNetwork(net$nodes, net$edges,
                main = "Strainhub: Country Transmission") %>%
       visNodes(shape = "ellipse") %>%
       visLayout(randomSeed = 12) %>%
@@ -988,57 +1096,12 @@ server <- function(input, output, session) {
   # ==============================================================================
   # TAB 3, PANEL 2 — HAPLOTYPE NETWORK
   # ==============================================================================
-  
+
   output$country_network <- renderVisNetwork({
+    net <- build_country_network_data()
+    validate(need(!is.null(net), "Country connectivity network could not be built."))
 
-    metadata_cn <- readr::read_csv("../Input_Files/FinalCOI_metadata_w_coor.csv",
-                                   col_names = TRUE, show_col_types = FALSE)
-
-    # Clean metadata
-    metadata_clean_cn <- metadata_cn %>%
-      filter(!is.na(Country) & Country != "" & Country != "NA") %>%
-      filter(!is.na(Haplotype) & Haplotype != "" & Haplotype != "NA")
-
-    # Random subsampling (20 per Country/Year)
-    set.seed(123)
-    metadata_subsampled_cn <- metadata_clean_cn %>%
-      group_by(Country, Year) %>%
-      slice_sample(n = 20) %>%
-      ungroup()
-
-    # Binary haplotype matrix
-    h_matrix_raw    <- table(metadata_subsampled_cn$Haplotype, metadata_subsampled_cn$Country)
-    h_matrix_binary <- h_matrix_raw
-    h_matrix_binary[h_matrix_binary > 0] <- 1
-
-    # Shared unique haplotype count between countries
-    country_matrix <- as.matrix(t(h_matrix_binary) %*% h_matrix_binary)
-    diag(country_matrix) <- 0
-
-    # Nodes
-    country_totals_cn <- metadata_subsampled_cn %>%
-      group_by(Country) %>%
-      summarize(n = n(), .groups = "drop")
-
-    nodes_country <- data.frame(
-      id    = seq_len(nrow(country_totals_cn)),
-      label = country_totals_cn$Country,
-      group = country_totals_cn$Country,
-      value = country_totals_cn$n,
-      title = paste("Included Samples:", country_totals_cn$n)
-    )
-
-    # Edges
-    edges_idx    <- which(country_matrix > 0, arr.ind = TRUE)
-    edges_idx    <- edges_idx[edges_idx[, 1] < edges_idx[, 2], ]
-    links_country <- data.frame(
-      from  = edges_idx[, 1],
-      to    = edges_idx[, 2],
-      value = mapply(function(f, t) country_matrix[f, t],
-                     edges_idx[, 1], edges_idx[, 2])
-    )
-
-    visNetwork(nodes_country, links_country,
+    visNetwork(net$nodes, net$links,
                main = "An. stephensi: Country Connectivity") %>%
       visLayout(randomSeed = 1) %>%
       visIgraphLayout(layout = "layout_nicely") %>%

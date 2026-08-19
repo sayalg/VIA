@@ -1,28 +1,21 @@
 # =============================================================================
-# ANOPHELES STEPHENSI PUBMED PUBLICATION BROWSER — SHINY MODULE
+# ANOPHELES STEPHENSI PUBMED PUBLICATION BROWSER — SHINY MODULE (v3)
 # =============================================================================
 # HOW TO INTEGRATE INTO YOUR EXISTING SHINY APP:
 #
 #   STEP 1 — Place this file (pubmed_module.R) in your app's folder
+#   STEP 2 — At the top of your app.R:  source("pubmed_module.R")
+#   STEP 3 — In your UI add a tab:      pubBrowserUI("pubs")
+#   STEP 4 — In your server add a line: pubBrowserServer("pubs")
+#   STEP 5 — Packages: install.packages(c("shiny","dplyr","stringr","httr","xml2"))
 #
-#   STEP 2 — At the top of your app.R, source this file:
-#               source("pubmed_module.R")
-#
-#   STEP 3 — In your UI, add a tab for the module. Example using navbarPage:
-#               navbarPage("My App",
-#                 tabPanel("Home",   ...your existing UI...),
-#                 tabPanel("Publications", pubBrowserUI("pubs"))
-#               )
-#             Or with tabsetPanel / shinydashboard — see examples at the bottom.
-#
-#   STEP 4 — In your server function, add one line:
-#               pubBrowserServer("pubs")
-#
-#   STEP 5 — Make sure these packages are installed:
-#               install.packages(c("shiny", "dplyr", "stringr", "httr", "xml2"))
-#
-#   That's it. The module is fully self-contained — it won't interfere
-#   with any of your existing inputs, outputs, or reactives.
+# WHAT CHANGED vs v2 (behaviour is identical, only efficiency improved):
+#   * PubMed results are cached at the PROCESS level with a time-to-live, so the
+#     20–40s network fetch happens once and is then shared by every user session
+#     instead of firing on every session start. The ↻ Refresh button forces a
+#     fresh fetch. This is the single biggest responsiveness win for the module.
+#   * Keyword parsing in the card renderer is done once per row instead of
+#     splitting the same string three times.
 # =============================================================================
 
 library(shiny)
@@ -30,6 +23,17 @@ library(dplyr)
 library(stringr)
 library(httr)
 library(xml2)
+
+# =============================================================================
+# PROCESS-LEVEL CACHE  (shared across all sessions of this R process)
+# =============================================================================
+
+.pubmed_cache <- new.env(parent = emptyenv())
+.pubmed_cache$data <- NULL          # data.frame of fetched papers
+.pubmed_cache$time <- NULL          # POSIXct of last successful fetch
+
+# Re-fetch from PubMed at most once per this window (seconds).
+PUBMED_CACHE_TTL <- 6 * 60 * 60     # 6 hours
 
 # =============================================================================
 # PUBMED FETCH HELPERS
@@ -69,16 +73,18 @@ library(xml2)
     doc      <- read_xml(content(resp, as = "text", encoding = "UTF-8"))
     articles <- xml_find_all(doc, "//PubmedArticle")
 
-    for (art in articles) {
+    # Build each batch's rows as a list, then bind once (avoids repeated
+    # data.frame growth).
+    batch_rows <- lapply(articles, function(art) {
       title <- xml_text(xml_find_first(art, ".//ArticleTitle"))
       title <- str_trim(str_remove_all(title, "\\[|\\]$"))
 
       author_nodes <- xml_find_all(art, ".//Author")
-      authors <- sapply(author_nodes, function(a) {
+      authors <- vapply(author_nodes, function(a) {
         last <- xml_text(xml_find_first(a, "LastName"))
         init <- xml_text(xml_find_first(a, "Initials"))
-        if (!is.na(last) && last != "") paste(last, init) else NA
-      })
+        if (!is.na(last) && last != "") paste(last, init) else NA_character_
+      }, character(1))
       authors <- paste(na.omit(authors), collapse = ", ")
       if (authors == "") authors <- "Unknown"
 
@@ -107,19 +113,39 @@ library(xml2)
       mesh_nodes <- xml_find_all(art, ".//MeshHeading/DescriptorName")
       kw_nodes   <- xml_find_all(art, ".//Keyword")
       keywords   <- unique(c(xml_text(mesh_nodes), xml_text(kw_nodes)))
-      keywords   <- paste(keywords[1:min(6, length(keywords))], collapse = ", ")
+      keywords   <- paste(keywords[seq_len(min(6, length(keywords)))], collapse = ", ")
 
-      all_rows[[length(all_rows) + 1]] <- data.frame(
+      data.frame(
         title, authors, year, journal,
         doi = doi_url, abstract, keywords,
         stringsAsFactors = FALSE
       )
-    }
-    Sys.sleep(0.34)
+    })
+
+    all_rows <- c(all_rows, batch_rows)
+    Sys.sleep(0.34)   # respect NCBI ~3 req/s rate limit
   }
 
   if (length(all_rows) == 0) return(data.frame())
   bind_rows(all_rows)
+}
+
+# Fetch (or reuse cached) papers. Returns a data.frame, or NULL on failure.
+.get_pubmed_papers <- function(force = FALSE) {
+  fresh <- !is.null(.pubmed_cache$data) &&
+    !is.null(.pubmed_cache$time) &&
+    as.numeric(difftime(Sys.time(), .pubmed_cache$time, units = "secs")) < PUBMED_CACHE_TTL
+
+  if (!force && fresh) return(.pubmed_cache$data)
+
+  ids <- .fetch_pubmed_ids("Anopheles stephensi[Title]", 500)
+  if (length(ids) == 0) return(NULL)
+  df <- .fetch_pubmed_details(ids)
+  if (nrow(df) == 0) return(NULL)
+
+  .pubmed_cache$data <- df
+  .pubmed_cache$time <- Sys.time()
+  df
 }
 
 # =============================================================================
@@ -376,21 +402,21 @@ pubBrowserServer <- function(id) {
     pub_data <- reactiveVal(NULL)
     status   <- reactiveVal("loading")
 
-    do_fetch <- function() {
+    # force = TRUE bypasses the process-level cache (used by the Refresh button).
+    do_fetch <- function(force = FALSE) {
       status("loading")
       pub_data(NULL)
       tryCatch({
-        ids <- .fetch_pubmed_ids("Anopheles stephensi[Title]", 500)
-        if (length(ids) == 0) { status("error"); return() }
-        df  <- .fetch_pubmed_details(ids)
-        if (nrow(df) == 0)    { status("error"); return() }
+        df <- .get_pubmed_papers(force = force)
+        if (is.null(df) || nrow(df) == 0) { status("error"); return() }
         pub_data(df)
         status("done")
       }, error = function(e) status("error"))
     }
 
-    observe({ do_fetch() })
-    observeEvent(input$refresh, { do_fetch() })
+    # On session start, reuse the cached result if it's still fresh.
+    observe({ do_fetch(force = FALSE) })
+    observeEvent(input$refresh, { do_fetch(force = TRUE) })
 
     # Filter + sort
     filtered <- reactive({
@@ -471,7 +497,8 @@ pubBrowserServer <- function(id) {
       cards <- lapply(seq_len(nrow(df)), function(i) {
         row <- df[i, ]
         kw_list <- if (!is.na(row$keywords) && nchar(row$keywords) > 0) {
-          kws <- str_split(row$keywords, ",\\s*")[[1]][1:min(5, length(str_split(row$keywords, ",\\s*")[[1]]))]
+          kws <- str_split(row$keywords, ",\\s*")[[1]]
+          kws <- kws[seq_len(min(5, length(kws)))]
           lapply(kws, function(k) tags$span(class = "pb-tag", str_trim(k)))
         } else list()
 
@@ -494,53 +521,3 @@ pubBrowserServer <- function(id) {
     })
   })
 }
-
-
-# =============================================================================
-# INTEGRATION EXAMPLES  (delete these before deploying — for reference only)
-# =============================================================================
-
-# ----- Example 1: navbarPage ------------------------------------------------
-# ui <- navbarPage("My App",
-#   tabPanel("Home",         fluidPage(...your existing UI...)),
-#   tabPanel("My Analysis",  fluidPage(...your existing UI...)),
-#   tabPanel("Publications", pubBrowserUI("pubs"))   # <-- add this tab
-# )
-# server <- function(input, output, session) {
-#   ...your existing server code...
-#   pubBrowserServer("pubs")                         # <-- add this line
-# }
-
-# ----- Example 2: tabsetPanel -----------------------------------------------
-# ui <- fluidPage(
-#   tabsetPanel(
-#     tabPanel("Results",      ...),
-#     tabPanel("Publications", pubBrowserUI("pubs"))  # <-- add this tab
-#   )
-# )
-# server <- function(input, output, session) {
-#   ...your existing server code...
-#   pubBrowserServer("pubs")
-# }
-
-# ----- Example 3: shinydashboard --------------------------------------------
-# library(shinydashboard)
-# ui <- dashboardPage(
-#   dashboardHeader(title = "My Dashboard"),
-#   dashboardSidebar(
-#     sidebarMenu(
-#       menuItem("Dashboard",    tabName = "dash"),
-#       menuItem("Publications", tabName = "pubs", icon = icon("book"))
-#     )
-#   ),
-#   dashboardBody(
-#     tabItems(
-#       tabItem(tabName = "dash", ...your existing UI...),
-#       tabItem(tabName = "pubs", pubBrowserUI("pubs"))   # <-- add this
-#     )
-#   )
-# )
-# server <- function(input, output, session) {
-#   ...your existing server code...
-#   pubBrowserServer("pubs")                              # <-- add this line
-# }
