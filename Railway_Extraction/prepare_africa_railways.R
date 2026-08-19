@@ -3,7 +3,8 @@
 # Run this ONCE offline to download all African country railway shapefiles from
 # Geofabrik and merge them into a single cached RDS file.
 #
-# Output: ../Input_Files/africa_railways.rds  (sf object, CRS = WGS84)
+# Output: ../Dashboard/data/africa_railways.rds  (sf object, CRS = WGS84)
+#         This is read directly by Dashboard/app.R at startup.
 #
 # After running, do NOT re-run unless you want to refresh the OSM data.
 # ================================================================================
@@ -14,7 +15,7 @@ library(tidyverse)
 
 # ---- Config ----
 RAILWAY_SHP <- "gis_osm_railways_free_1.shp"
-OUT_RDS     <- "../Input_Files/africa_railways.rds"
+OUT_RDS     <- "../Dashboard/data/africa_railways.rds"
 TMP_DIR     <- tempdir()
 
 # ---- 1. Build URLs from hardcoded country list ----

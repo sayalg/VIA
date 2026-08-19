@@ -10,6 +10,8 @@ library(htmlwidgets)
 library(htmltools)
 library(sf)
 library(rnaturalearth)
+library(rnaturalearthdata)   # ne_countries() loads this dynamically; attach it so
+                             # the deployment dependency scanner ships it too
 library(readxl)
 library(visNetwork)
 library(DT)
@@ -22,6 +24,18 @@ library(httr)
 library(xml2)
 library(plotly)
 
+# Runtime dependencies that are only reached indirectly. They are referenced —
+# not attached — so the deployment dependency scanner ships them while dplyr
+# verbs stay unmasked (igraph in particular masks a lot of tidyverse names).
+local({
+  for (pkg in c("igraph",      # visNetwork::visIgraphLayout()
+                "tidytree")) { # tidytree::drop.tip()
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      stop("Required package '", pkg, "' is not installed.")
+    }
+  }
+})
+
 source("pubmed_module.R")
 
 # ---- Configuration ----
@@ -29,17 +43,37 @@ MAPBOX_TOKEN      <- "pk.eyJ1Ijoic2F5YWxnIiwiYSI6ImNtaWdha3Y4eDA1YmczZXEybjZvZjE
 MAPBOX_STYLE      <- "https://api.mapbox.com/styles/v1/sayalg/cmkr2q0c3000q01s87umrehau/tiles/256/{z}/{x}/{y}@2x?access_token={accessToken}"
 INVALID_LOCATIONS <- c("Laboratory")
 
-METADATA_PATH <- "../Input_Files/FinalCOI_metadata_w_coor.csv"
-TREE_PATH     <- "../RAXML/COI_subsampled20_per_country_year.aligned.raxml.bestTree"
+# ---- Data paths -------------------------------------------------------------
+# All runtime data lives in Dashboard/data/ so that the app directory is fully
+# self-contained and can be deployed as-is (rsconnect/Shiny Server only ship the
+# app directory — anything referenced with "../" would be missing in the bundle).
+DATA_DIR <- "data"
+
+SAMPLES_PATH  <- file.path(DATA_DIR, "FinalCOI_metadata.csv")
+METADATA_PATH <- file.path(DATA_DIR, "FinalCOI_metadata_w_coor.csv")
+INVASIVE_PATH <- file.path(DATA_DIR, "MTM_INVASIVE_VECTOR_SPECIES_20251205.xlsx")
+TREE_PATH     <- file.path(DATA_DIR, "COI_subsampled20_per_country_year.aligned.raxml.bestTree")
+RAILWAYS_PATH <- file.path(DATA_DIR, "africa_railways.rds")
+SHIPPING_PATH <- file.path(DATA_DIR, "shipping_routes.rds")
+
+# Fail fast and loudly at startup rather than with an opaque error mid-render.
+local({
+  required <- c(SAMPLES_PATH, METADATA_PATH, INVASIVE_PATH, TREE_PATH)
+  absent   <- required[!file.exists(required)]
+  if (length(absent) > 0) {
+    stop("Missing required data file(s): ", paste(absent, collapse = ", "),
+         "\nThe app must be run with Dashboard/ as the working directory.")
+  }
+})
 
 # ================================================================================
 # DATA LOADING  (runs once per R process, shared by all sessions)
 # ================================================================================
 
-samples_df <- read.csv("../Input_Files/FinalCOI_metadata.csv", sep = ",", header = TRUE)
+samples_df <- read.csv(SAMPLES_PATH, sep = ",", header = TRUE)
 samples_df[samples_df == ""] <- NA
 
-invasive_status <- read_excel("../Input_Files/MTM_INVASIVE_VECTOR_SPECIES_20251205.xlsx", sheet = "Data")
+invasive_status <- read_excel(INVASIVE_PATH, sheet = "Data")
 invasive_status[invasive_status == ""] <- NA
 
 samples_df <- samples_df %>%
@@ -104,9 +138,8 @@ world_polygons <- ne_countries(returnclass = "sf") %>%
 
 # ---- Africa railways (pre-built by prepare_africa_railways.R) ----
 # Run prepare_africa_railways.R once offline to generate this file.
-africa_railways_path <- "../Input_Files/africa_railways.rds"
-africa_railways <- if (file.exists(africa_railways_path)) {
-  readRDS(africa_railways_path)
+africa_railways <- if (file.exists(RAILWAYS_PATH)) {
+  readRDS(RAILWAYS_PATH)
 } else {
   warning("africa_railways.rds not found — railway layer will be hidden. Run prepare_africa_railways.R.")
   NULL
@@ -115,9 +148,8 @@ africa_railways <- if (file.exists(africa_railways_path)) {
 # ---- Shipping routes (pre-built by prepare_shipping_routes.R) ----
 # Named list: list("2006" = sf, "2007" = sf, ...)
 # Each sf has columns: from, to, geometry (LINESTRING, WGS84)
-shipping_rds_path <- "../Input_Files/shipping_routes.rds"
-shipping_routes_by_year <- if (file.exists(shipping_rds_path)) {
-  readRDS(shipping_rds_path)
+shipping_routes_by_year <- if (file.exists(SHIPPING_PATH)) {
+  readRDS(SHIPPING_PATH)
 } else {
   warning("shipping_routes.rds not found — shipping layer disabled. Run prepare_shipping_routes.R.")
   NULL

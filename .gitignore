@@ -1,2 +1,10 @@
 .DS_Store
-Dashboard/.Rhistory
+
+# R session cruft
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# rsconnect deployment records (contain account metadata)
+rsconnect/

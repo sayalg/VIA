@@ -6,9 +6,10 @@
 # or India. Routes are drawn as multi-segment LINESTRING geometries that pass
 # through maritime waypoints, keeping lines over water.
 #
-# Input:  ../Input_Files/shipping_routes.csv  (tab-separated)
-# Output: ../Input_Files/shipping_routes.rds
+# Input:  ./US_LSBCI.csv  (UNCTAD Liner Shipping Bilateral Connectivity Index)
+# Output: ../Dashboard/data/shipping_routes.rds
 #         Named list: list("2006" = sf, "2007" = sf, ...)
+#         This is read directly by Dashboard/app.R at startup.
 # ================================================================================
 
 library(sf)
@@ -16,7 +17,7 @@ library(tidyverse)
 library(rnaturalearth)
 library(reticulate)
 
-OUT_RDS <- "../Input_Files/shipping_routes.rds"
+OUT_RDS <- "../Dashboard/data/shipping_routes.rds"
 
 # ================================================================================
 # REGION FILTER

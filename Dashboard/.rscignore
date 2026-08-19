@@ -1,0 +1,11 @@
+# Files in this directory that must NOT be included in the deployment bundle.
+# rsconnect::deployApp() reads this file from the app root.
+
+.Rhistory
+.Rprofile.local
+.Rproj.user
+rsconnect
+
+# Reference output from the StrainHub analysis. Kept for provenance, never read
+# by app.R, so there is no reason to ship it.
+StrainHub_metrics.csv
