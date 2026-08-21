@@ -11,31 +11,34 @@ This is an interactive R Shiny web application that displays haplotype distribut
 Install all dependencies before running the app. Copy and paste the following into your R console:
 
 ```r
-# CRAN
 install.packages(c(
-  "shiny", "bslib", "shinycssloaders", "DT", "plotly",
+  "shiny", "bslib", "shinycssloaders",
   "leaflet", "leaflet.minicharts",
   "tidyverse", "tidygeocoder",
   "htmlwidgets", "htmltools",
   "sf", "rnaturalearth", "rnaturalearthdata",
-  "readxl", "visNetwork", "igraph", "ape",
-  "httr", "xml2", "stringr", "ggplot2"
+  "readxl", "visNetwork", "ape", "tidytree",
+  "httr", "xml2", "stringr",
+  # required by the vendored make_transnet() — see Dashboard/strainhub_transnet.R
+  "igraph", "castor", "hash", "plyr", "tibble", "magrittr"
 ))
-
-# Bioconductor — phylogenetic tree handling
-if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
-BiocManager::install(c("treeio", "tidytree"))
-
-# GitHub — not on CRAN
-if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
-remotes::install_github("abbasilab/strainhub")
 ```
 
-> **Heads-up for deployment:** `strainhub` is a GitHub-only package and `treeio`/`tidytree`
-> come from Bioconductor. Install them exactly as above (`remotes::install_github` /
-> `BiocManager::install`) on the machine you deploy from — `rsconnect` records the source
-> repository from your local install, and a `strainhub` installed any other way will fail
-> to restore on the server.
+**Everything comes from CRAN.** There is no Bioconductor package and no GitHub-only
+package in the app, which is what makes it deploy cleanly. `DT`, `ggplot2`, `plotly`
+and `treeio` used to be attached in `app.R` but were never called; they have been
+removed, which is what dropped the last Bioconductor dependency (`treeio`). Re-add
+them in both places if you later add a datatable, a ggplot, or a plotly chart.
+
+> **Note on `strainhub`.** The app does not depend on the `strainhub` package, and
+> you should not try to install it. Its `DESCRIPTION` (v2.0.0) declares no `Imports:`
+> or `Depends:` field while its `NAMESPACE` imports 27 packages, so `R CMD INSTALL`
+> aborts with **`lazy loading failed for package 'strainhub'`** — and two of those
+> imports cannot be satisfied from CRAN at all (`rbokeh` is archived, `treeio` is
+> Bioconductor-only). The one function this dashboard uses, `make_transnet()`, is
+> instead vendored into [`Dashboard/strainhub_transnet.R`](Dashboard/strainhub_transnet.R)
+> under StrainHub's Apache-2.0 licence, with the upstream source, citation, and a
+> full list of deviations recorded in the file header.
 
 ---
 
@@ -49,6 +52,7 @@ VIA/
 ├── Dashboard/                  ← this whole folder is what gets deployed
 │   ├── app.R
 │   ├── pubmed_module.R
+│   ├── strainhub_transnet.R    ← vendored make_transnet() (Apache 2.0)
 │   ├── .rscignore
 │   ├── data/
 │   │   ├── FinalCOI_metadata.csv
@@ -141,8 +145,11 @@ subdirectories intact.
 
 Before the first deploy:
 
-- Install `strainhub`, `treeio`, and `tidytree` from their proper sources (see above)
-  so `rsconnect` records where to restore them from.
+- Install `treeio` and `tidytree` via `BiocManager` (see above) so `rsconnect` records
+  Bioconductor as the repository to restore them from.
+- Do **not** install `strainhub`. If it is present in your library, `rsconnect` may try
+  to add it to the manifest and the server-side build will fail with
+  `lazy loading failed for package 'strainhub'`. The app no longer references it.
 - Make sure the server has outbound internet access. The app calls PubMed at
   runtime and loads Mapbox / CartoDB / Esri basemap tiles in the browser.
 - `.rscignore` in `Dashboard/` keeps session cruft out of the bundle.

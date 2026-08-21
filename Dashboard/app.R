@@ -10,25 +10,21 @@ library(htmlwidgets)
 library(htmltools)
 library(sf)
 library(rnaturalearth)
-library(rnaturalearthdata)   # ne_countries() loads this dynamically; attach it so
-                             # the deployment dependency scanner ships it too
+library(rnaturalearthdata)
 library(readxl)
 library(visNetwork)
-library(DT)
 library(ape)
-library(ggplot2)
-library(strainhub)
 library(stringr)
-library(treeio)
 library(httr)
 library(xml2)
-library(plotly)
 
-# Runtime dependencies that are only reached indirectly. They are referenced —
-# not attached — so the deployment dependency scanner ships them while dplyr
-# verbs stay unmasked (igraph in particular masks a lot of tidyverse names).
 local({
-  for (pkg in c("igraph",      # visNetwork::visIgraphLayout()
+  for (pkg in c("igraph",      # visIgraphLayout(); centrality in make_transnet()
+                "castor",      # asr_max_parsimony() in make_transnet()
+                "hash",        # hash() in make_transnet()
+                "plyr",        # count() in make_transnet()
+                "tibble",      # rowid_to_column() in make_transnet()
+                "magrittr",    # %>% in strainhub_transnet.R
                 "tidytree")) { # tidytree::drop.tip()
     if (!requireNamespace(pkg, quietly = TRUE)) {
       stop("Required package '", pkg, "' is not installed.")
@@ -38,15 +34,16 @@ local({
 
 source("pubmed_module.R")
 
+# make_transnet(), vendored from strainhub (Apache 2.0).
+# Strainhub_transnet.R documents the full reasoning.
+source("strainhub_transnet.R")
+
 # ---- Configuration ----
 MAPBOX_TOKEN      <- "pk.eyJ1Ijoic2F5YWxnIiwiYSI6ImNtaWdha3Y4eDA1YmczZXEybjZvZjE0YTQifQ.T_HqxBxbmcdViI2L0LIzgQ"
 MAPBOX_STYLE      <- "https://api.mapbox.com/styles/v1/sayalg/cmkr2q0c3000q01s87umrehau/tiles/256/{z}/{x}/{y}@2x?access_token={accessToken}"
 INVALID_LOCATIONS <- c("Laboratory")
 
 # ---- Data paths -------------------------------------------------------------
-# All runtime data lives in Dashboard/data/ so that the app directory is fully
-# self-contained and can be deployed as-is (rsconnect/Shiny Server only ship the
-# app directory — anything referenced with "../" would be missing in the bundle).
 DATA_DIR <- "data"
 
 SAMPLES_PATH  <- file.path(DATA_DIR, "FinalCOI_metadata.csv")
@@ -561,11 +558,16 @@ build_haplo_network_data <- function() {
     metadata$haplo_concat <- paste(metadata$Country, metadata$Haplotype, sep = "_")
 
     ## Make the Transmission Network
+    # metricsOutputFile = "" is required for deployment: the default
+    # ("StrainHub_metrics.csv") makes make_transnet() write into the working
+    # directory, which is read-only on shinyapps.io / Posit Connect and would
+    # abort the render. "" tells strainhub to skip the file entirely.
     graph <- make_transnet(pruned_tree,
                            metadata,
-                           columnSelection  = "Country",
-                           centralityMetric = 3,   # Betweenness Centrality
-                           treeType         = "parsimonious")
+                           columnSelection   = "Country",
+                           centralityMetric  = 3,   # Betweenness Centrality
+                           treeType          = "parsimonious",
+                           metricsOutputFile = "")
 
     nodes <- graph$x$nodes %>%
       mutate(shape = "dot",
@@ -1110,8 +1112,6 @@ server <- function(input, output, session) {
   # ==============================================================================
   # TAB 3, PANEL 1 — STRAINHUB NETWORK
   # ==============================================================================
-  # Node/edge data is memoised in build_haplo_network_data(); only the (cheap)
-  # visNetwork assembly happens per render.
 
   output$haplo_network <- renderVisNetwork({
     net <- build_haplo_network_data()
