@@ -889,15 +889,14 @@ ui <- page_navbar(
           ),
           tags$h5("Data"),
           tags$p(
-            "Sequences were aligned with MAFFT and haplotypes were inferred from previous findings. ",
-            "Phylogenetic inference was performed with RAxML. ", "Scripts available here: ", tags$a(href= "https://github.com/sayalg/VIA", "https://github.com/sayalg/VIA")
+            "Scripts available here: ", tags$a(href= "https://github.com/sayalg/VIA", "https://github.com/sayalg/VIA")
           ),
           tags$h5("Contact"),
           # TODO: update with your actual contact info
           tags$p("For questions or data requests, contact: ",
                  tags$a(href = "mailto:Tamar_Carter@baylor.edu", "Tamar_Carter@baylor.edu")),
           tags$h5("Citation"),
-          tags$p(tags$em("TODO: Add citation once published.")),
+          tags$p(tags$em("Coming Soon")),
           tags$hr(),
           tags$p(class = "text-muted small",
                  paste0("Built with R Shiny & bslib | Last updated: ", format(Sys.Date(), "%B %Y")))
