@@ -8,18 +8,54 @@ the `Dashboard/` directory is fully self-contained and can be published as-is.
 only the app directory. A path like `../Input_Files/...` resolves fine locally
 but is missing once published.
 
+## Contents
+
 | File | Size | Read by | Produced by |
 |---|---|---|---|
 | `FinalCOI_metadata.csv` | 163 KB | `SAMPLES_PATH` — sample table, location cleaning | Curated by hand |
-| `FinalCOI_metadata_w_coor.csv` | 171 KB | `METADATA_PATH` — map markers + both networks | `fill_missing_coords()` in `app.R`, run once offline |
+| `FinalCOI_metadata_w_coor.csv` | 171 KB | `METADATA_PATH` — map markers | `fill_missing_coords()` in `app.R`, run once offline |
 | `MTM_INVASIVE_VECTOR_SPECIES_20251205.xlsx` | 189 KB | `INVASIVE_PATH` — country native/invasive layer (sheet `Data`, columns `COUNTRY_NAME`, `INVASIVE_STATUS`) | Malaria Threat Map export |
-| `COI_subsampled20_per_country_year.aligned.raxml.bestTree` | 15 KB | `TREE_PATH` — StrainHub transmission network | RAxML (see `../../RAXML/`) |
-| `africa_railways.rds` | 5.6 MB | `RAILWAYS_PATH` — railway overlay (optional) | `../../Railway_Extraction/prepare_africa_railways.R` |
-| `shipping_routes.rds` | 7.1 MB | `SHIPPING_PATH` — shipping-route overlay (optional) | `../../Shipping_Extraction/prepare_shipping_routes.R` |
+| `COI_subsampled20_per_country_year.aligned.raxml.bestTree` | 15 KB | `TREE_PATH` — fallback network build only | RAxML (see `../../RAXML/`) |
+| `africa_railways.rds` | 437 KB | `RAILWAYS_PATH` — railway overlay | **`Tools/build_app_cache.R`** |
+| `shipping_routes.rds` | 58 KB | `SHIPPING_PATH` — shipping overlay | **`Tools/build_app_cache.R`** |
+| `networks.rds` | 1 KB | Both visNetwork panels | **`Tools/build_app_cache.R`** |
+| `pubmed_snapshot.rds` | 233 KB | Seeds the Literature tab | **`Tools/build_app_cache.R`** |
 
-The two `.rds` files are optional: if either is absent the app starts with a
-warning and hides the corresponding map layer. The other four are required and
-`app.R` stops at startup with an explicit message if any is missing.
+## Generated caches
 
-Raw sequence data (`.fasta`) is **not** here — it is analysis input, not app
-input, and stays in [`../../Input_Files/`](../../Input_Files/).
+The last four are **build artefacts, not source data**. Regenerate them from the
+repository root whenever the underlying data changes:
+
+```bash
+Rscript Tools/build_app_cache.R
+```
+
+They exist because the app was shipping ~75 MB of map geometry to every browser,
+which is what made it slow to load and prone to crashing on a small instance:
+
+- **`shipping_routes.rds`** — the raw extract repeats each from–to pair once per
+  year it was active: 34,735 features where only 1,774 are distinct, all drawn on
+  top of one another. The cache stores each geometry once plus a
+  `route_id → year` index. 57 MB of GeoJSON becomes 2.6 MB, with no visible
+  difference. Deliberately *not* simplified — searoute paths hug coastlines, and
+  shaving vertices can walk a sea lane across land.
+- **`africa_railways.rds`** — the raw OSM extract is 32,564 separate features,
+  i.e. 32,564 SVG paths for Leaflet to lay out. The cache simplifies to 500 m
+  and merges into one MULTILINESTRING per railway type: 3 features, 2.7 MB.
+  The trade is that individual railway names are gone from the hover label; the
+  type is still shown, and the legend is unchanged.
+- **`networks.rds`** — both visNetwork node/edge tables, so no session pays for
+  the parsimony reconstruction or the centrality maths.
+- **`pubmed_snapshot.rds`** — seed results so the first visitor after a process
+  start isn't left waiting 20–40 s for the live NCBI fetch.
+
+If a cache is missing the app still runs: the two network panels fall back to
+computing at runtime, and the two map layers hide themselves with a startup
+warning.
+
+## Raw inputs
+
+The raw pipeline artefacts these are built from live outside the app directory,
+in [`../../Input_Files/`](../../Input_Files/) — `africa_railways_raw.rds` and
+`shipping_routes_raw.rds`, along with the `.fasta` sequence data, which is
+analysis input rather than app input.

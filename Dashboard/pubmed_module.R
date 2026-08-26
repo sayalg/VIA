@@ -130,6 +130,28 @@ PUBMED_CACHE_TTL <- 6 * 60 * 60     # 6 hours
   bind_rows(all_rows)
 }
 
+# Seed the process cache from a snapshot built offline by
+# Tools/build_app_cache.R. Without this the very first visitor after a process
+# start waits 20-40 s for the live NCBI fetch before the Literature tab shows
+# anything — on a server that cold-starts on demand, that is most visitors.
+#
+# The snapshot is treated as fresh for one TTL window from process start, so the
+# first sessions are instant and the process then refreshes on its normal
+# schedule. Rebuild the cache before each deploy to keep it current; the tab's
+# Refresh button always forces a live fetch regardless.
+seed_pubmed_cache <- function(path) {
+  if (!file.exists(path)) return(invisible(FALSE))
+
+  snap <- tryCatch(readRDS(path), error = function(e) NULL)
+  if (is.null(snap) || is.null(snap$data) || nrow(snap$data) == 0) {
+    return(invisible(FALSE))
+  }
+
+  .pubmed_cache$data <- snap$data
+  .pubmed_cache$time <- Sys.time()
+  invisible(TRUE)
+}
+
 # Fetch (or reuse cached) papers. Returns a data.frame, or NULL on failure.
 .get_pubmed_papers <- function(force = FALSE) {
   fresh <- !is.null(.pubmed_cache$data) &&

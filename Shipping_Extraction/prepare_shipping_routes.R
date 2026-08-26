@@ -7,9 +7,13 @@
 # through maritime waypoints, keeping lines over water.
 #
 # Input:  ./US_LSBCI.csv  (UNCTAD Liner Shipping Bilateral Connectivity Index)
-# Output: ../Dashboard/data/shipping_routes.rds
+# Output: ../Input_Files/shipping_routes_raw.rds
 #         Named list: list("2006" = sf, "2007" = sf, ...)
-#         This is read directly by Dashboard/app.R at startup.
+#
+# This is the RAW extract, with each from-to pair repeated once per year it was
+# active (~35k features for ~1.8k distinct routes). It is not read by the app
+# directly. Run Tools/build_app_cache.R afterwards to deduplicate it into the
+# Dashboard/data/shipping_routes.rds that the dashboard actually loads.
 # ================================================================================
 
 library(sf)
@@ -17,7 +21,7 @@ library(tidyverse)
 library(rnaturalearth)
 library(reticulate)
 
-OUT_RDS <- "../Dashboard/data/shipping_routes.rds"
+OUT_RDS <- "../Input_Files/shipping_routes_raw.rds"
 
 # ================================================================================
 # REGION FILTER

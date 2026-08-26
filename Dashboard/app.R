@@ -43,6 +43,35 @@ MAPBOX_TOKEN      <- "pk.eyJ1Ijoic2F5YWxnIiwiYSI6ImNtaWdha3Y4eDA1YmczZXEybjZvZjE
 MAPBOX_STYLE      <- "https://api.mapbox.com/styles/v1/sayalg/cmkr2q0c3000q01s87umrehau/tiles/256/{z}/{x}/{y}@2x?access_token={accessToken}"
 INVALID_LOCATIONS <- c("Laboratory")
 
+# ---- Basemap ----------------------------------------------------------------
+# CARTO now requires an API key for the raster basemap tiles at
+# basemaps.cartocdn.com, which is what providers$CartoDB.Positron points at.
+# Without a key, CARTO serves tiles stamped "requires an API key" — visible as
+# soon as you zoom past the levels their CDN still has cached.
+#
+# A key is free (fair use: 5M tile requests/month) and needs no CARTO account:
+#     https://carto.com/basemaps/apikey
+#
+# Set it here, or leave it empty and set the CARTO_API_KEY environment variable
+# (on shinyapps.io: rsconnect::deployApp(..., envVars = "CARTO_API_KEY")).
+#
+# With a key   -> CartoDB Positron, exactly as before, usable to zoom 20.
+# Without one  -> Esri Light Gray Canvas, no key required, visually similar.
+#                 Esri only renders that layer to zoom 16, so maxNativeZoom is
+#                 pinned there and Leaflet upscales beyond it. Without that pin
+#                 Esri returns a "no data here" placeholder tile at z17+, which
+#                 would just be a different broken-looking map.
+#
+# Note CARTO have said the raster basemaps are on a retirement path, so the
+# keyless fallback is the more durable option of the two.
+CARTO_API_KEY <- Sys.getenv("CARTO_API_KEY", "")
+
+# Esri's World Imagery (the Satellite layer) has its own ceiling: real tiles to
+# zoom 19, the same placeholder beyond.
+ESRI_IMAGERY_MAX_NATIVE_ZOOM <- 19
+ESRI_GRAY_MAX_NATIVE_ZOOM    <- 16
+MAP_MAX_ZOOM                 <- 19
+
 # ---- Data paths -------------------------------------------------------------
 DATA_DIR <- "data"
 
@@ -133,28 +162,59 @@ metadata_full <- readr::read_csv(METADATA_PATH, col_names = TRUE, show_col_types
 world_polygons <- ne_countries(returnclass = "sf") %>%
   mutate(name_clean = tolower(admin))
 
-# ---- Africa railways (pre-built by prepare_africa_railways.R) ----
-# Run prepare_africa_railways.R once offline to generate this file.
+# ---- Africa railways (cache built by Tools/build_app_cache.R) ----
+# One MULTILINESTRING per railway type (rail / light_rail / narrow_gauge /
+# preserved), simplified to 500 m and rounded to 4 dp. The raw OSM extract is
+# 32,564 separate features and ~16 MB of GeoJSON per browser; this is 3 features
+# and ~2.6 MB, which is the difference between a map that pans and one that
+# doesn't. Rebuild with: Rscript Tools/build_app_cache.R
 africa_railways <- if (file.exists(RAILWAYS_PATH)) {
   readRDS(RAILWAYS_PATH)
 } else {
-  warning("africa_railways.rds not found — railway layer will be hidden. Run prepare_africa_railways.R.")
+  warning("africa_railways.rds not found — railway layer will be hidden. ",
+          "Run: Rscript Tools/build_app_cache.R")
   NULL
 }
 
-# ---- Shipping routes (pre-built by prepare_shipping_routes.R) ----
-# Named list: list("2006" = sf, "2007" = sf, ...)
-# Each sf has columns: from, to, geometry (LINESTRING, WGS84)
-shipping_routes_by_year <- if (file.exists(SHIPPING_PATH)) {
+# ---- Shipping routes (cache built by Tools/build_app_cache.R) ----
+# list(routes = sf(route_id, from, to, geometry),
+#      route_years = data.frame(route_id, year),
+#      years = integer vector)
+#
+# The raw data repeated each from-to pair once per year — 34,735 features where
+# only 1,774 are distinct, all drawn on top of each other. Geometry is now stored
+# once and the year index says which routes were active when.
+shipping_cache <- if (file.exists(SHIPPING_PATH)) {
   readRDS(SHIPPING_PATH)
 } else {
-  warning("shipping_routes.rds not found — shipping layer disabled. Run prepare_shipping_routes.R.")
+  warning("shipping_routes.rds not found — shipping layer disabled. ",
+          "Run: Rscript Tools/build_app_cache.R")
   NULL
 }
-shipping_years <- if (!is.null(shipping_routes_by_year)) {
-  as.integer(names(shipping_routes_by_year))
+
+shipping_routes <- if (!is.null(shipping_cache)) shipping_cache$routes      else NULL
+shipping_index  <- if (!is.null(shipping_cache)) shipping_cache$route_years else NULL
+shipping_years  <- if (!is.null(shipping_cache)) shipping_cache$years       else integer(0)
+
+# ---- Pre-built networks (cache built by Tools/build_app_cache.R) ----
+# Both node/edge tables are computed offline, so no session pays for the
+# parsimony reconstruction or the centrality maths.
+NETWORKS_PATH <- file.path(DATA_DIR, "networks.rds")
+networks_cache <- if (file.exists(NETWORKS_PATH)) {
+  readRDS(NETWORKS_PATH)
 } else {
-  integer(0)
+  warning("networks.rds not found — networks will be computed at runtime. ",
+          "Run: Rscript Tools/build_app_cache.R")
+  NULL
+}
+
+# ---- PubMed snapshot (cache built by Tools/build_app_cache.R) ----
+# Seeds the Literature tab so the first visitor is not left waiting 20-40 s for
+# the live NCBI fetch. Optional — the module falls back to fetching live.
+PUBMED_SNAPSHOT_PATH <- file.path(DATA_DIR, "pubmed_snapshot.rds")
+if (!seed_pubmed_cache(PUBMED_SNAPSHOT_PATH)) {
+  message("No PubMed snapshot found — the Literature tab will fetch live on ",
+          "first visit. Run: Rscript Tools/build_app_cache.R")
 }
 
 # ================================================================================
@@ -194,12 +254,44 @@ haplotype_palette <- create_haplotype_palette(df_haplo, category_col = "Haplotyp
 # MAP FUNCTIONS
 # ================================================================================
 
+# The light "Base" layer, keyed or keyless depending on CARTO_API_KEY above.
+add_base_tiles <- function(map) {
+  if (nzchar(CARTO_API_KEY)) {
+    addTiles(
+      map,
+      urlTemplate = paste0(
+        "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png?key=",
+        CARTO_API_KEY
+      ),
+      attribution = paste(
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        'contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+      ),
+      options = tileOptions(subdomains = "abcd", maxZoom = 20),
+      group   = "Base"
+    )
+  } else {
+    addProviderTiles(
+      map,
+      providers$Esri.WorldGrayCanvas,
+      group   = "Base",
+      options = providerTileOptions(maxNativeZoom = ESRI_GRAY_MAX_NATIVE_ZOOM,
+                                    maxZoom       = MAP_MAX_ZOOM)
+    )
+  }
+}
+
 create_base_map <- function(tile_size = 256) {
-  leaflet() %>%
+  leaflet(options = leafletOptions(maxZoom = MAP_MAX_ZOOM)) %>%
     addMapPane("countryStatus", zIndex = 200) %>%
     addMapPane("charts",        zIndex = 400) %>%
-    addProviderTiles(providers$CartoDB.Positron,  group = "Base") %>%
-    addProviderTiles(providers$Esri.WorldImagery, group = "Satellite") %>%
+    add_base_tiles() %>%
+    addProviderTiles(
+      providers$Esri.WorldImagery,
+      group   = "Satellite",
+      options = providerTileOptions(maxNativeZoom = ESRI_IMAGERY_MAX_NATIVE_ZOOM,
+                                    maxZoom       = MAP_MAX_ZOOM)
+    ) %>%
     addTiles(
       urlTemplate = MAPBOX_STYLE,
       options     = tileOptions(accessToken = MAPBOX_TOKEN, tileSize = tile_size),
@@ -456,10 +548,13 @@ add_railway_layer <- function(map, railways = africa_railways) {
       opacity     = 0.75,
       group       = "Railways",
       options     = pathOptions(pane = "railways"),
-      label       = ~paste0(
-        "<b>", ifelse(is.na(name) | name == "", "Unnamed railway", name), "</b><br>",
-        "Type: ", fclass
-      ) %>% lapply(htmltools::HTML),
+      # The cache merges every railway of a type into one MULTILINESTRING, so
+      # there is no per-railway name to show any more. That trade buys a ~6x
+      # smaller payload and takes Leaflet from 32,564 SVG paths down to 3, which
+      # is what was making the map crawl. To get individual names back, drop the
+      # group_by(fclass)/summarise() step in Tools/build_app_cache.R and keep the
+      # `name` column — expect the slowdown to come with it.
+      label        = ~paste0("Railway type: ", fclass),
       labelOptions = labelOptions(style = list("font-size" = "12px"))
     ) %>%
     addLegend(
@@ -528,19 +623,27 @@ add_shipping_layer <- function(map, routes_sf, highlight_location = NULL) {
 }
 
 # ================================================================================
-# NETWORK BUILDERS  (lazy, memoised once per process, shared across sessions)
+# NETWORK BUILDERS  (served from the offline cache; computed only as a fallback)
 # ================================================================================
-# v2 recomputed both networks inside their renderVisNetwork callbacks, which
-# meant re-reading CSVs from disk, re-parsing the tree, running the parsimony
-# reconstruction (make_transnet) and the matrix maths on EVERY session. None of
-# that depends on user input, so here we compute each network's node/edge data
-# exactly once and cache it in an app-level environment.
+# Neither network depends on user input, so both are built offline by
+# Tools/build_app_cache.R and read straight out of networks.rds. That keeps the
+# parsimony reconstruction, the centrality maths and the tree parsing off the
+# server entirely — and means castor/hash/plyr/igraph are only touched if the
+# cache is missing.
+#
+# The runtime builders below are kept as a fallback so the app still works on a
+# checkout where the cache has not been generated yet.
 
 .app_cache <- new.env(parent = emptyenv())
 
 # ---- Panel 1: Strainhub country transmission network ----
 build_haplo_network_data <- function() {
   if (!is.null(.app_cache$haplo_net)) return(.app_cache$haplo_net)
+
+  if (!is.null(networks_cache$haplo)) {
+    .app_cache$haplo_net <- networks_cache$haplo
+    return(.app_cache$haplo_net)
+  }
 
   result <- tryCatch({
     treedata <- ape::read.tree(TREE_PATH)
@@ -599,6 +702,11 @@ build_haplo_network_data <- function() {
 # ---- Panel 2: Country connectivity (shared haplotypes) network ----
 build_country_network_data <- function() {
   if (!is.null(.app_cache$country_net)) return(.app_cache$country_net)
+
+  if (!is.null(networks_cache$country)) {
+    .app_cache$country_net <- networks_cache$country
+    return(.app_cache$country_net)
+  }
 
   result <- tryCatch({
     # Clean metadata (reuse the already-loaded object)
@@ -882,7 +990,7 @@ ui <- page_navbar(
       card(
         class = "about-card",
         card_body(
-          tags$h4("About the AnStep Atlas"),
+          tags$h4("About VIA"),
           tags$p(
             "This dashboard visualizes COI haplotype diversity and geographic distribution of ",
             tags$em("Anopheles stephensi"), " and related vectors across native and invasive ranges."
@@ -982,7 +1090,13 @@ server <- function(input, output, session) {
     }
   })
 
-  # Base map with static haplotype legend — renders once
+  # Base map with static haplotype legend — renders once.
+  #
+  # NOTE: the Railways layer is deliberately NOT added here. It starts hidden
+  # (hideGroup in create_base_map), and adding it at render time meant every
+  # visitor downloaded the full railway geometry before they could see anything,
+  # whether or not they ever switched the layer on. It is now drawn on demand by
+  # the observer below.
   output$map <- renderLeaflet({
     create_base_map() %>%
       add_country_status_layer(
@@ -990,7 +1104,6 @@ server <- function(input, output, session) {
         country_col = "COUNTRY_NAME",
         status_col  = "INVASIVE_STATUS"
       ) %>%
-      add_railway_layer() %>%
       addLegend(
         position = "bottomleft",
         colors   = haplotype_palette,
@@ -1000,6 +1113,23 @@ server <- function(input, output, session) {
         layerId  = "haplotype_legend"
       )
   })
+
+  # ---- Lazy heavy layers ------------------------------------------------------
+  # input$map_groups holds the overlay groups the user currently has ticked.
+  # Both heavy layers are hidden by default, so gating on this means a first page
+  # load ships none of their geometry.
+  railways_drawn <- reactiveVal(FALSE)
+
+  layer_on <- function(name) {
+    isTRUE(name %in% input$map_groups)
+  }
+
+  observeEvent(input$map_groups, {
+    if (layer_on("Railways") && !railways_drawn()) {
+      leafletProxy("map") %>% add_railway_layer()
+      railways_drawn(TRUE)   # geometry is static; draw it at most once per session
+    }
+  }, ignoreNULL = TRUE)
 
   # Update pie charts on filter change only
   observe({
@@ -1046,9 +1176,11 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
 
-  # Update shipping routes layer when year filter changes
+  # Routes matching the current temporal filter. Geometry is stored once per
+  # from-to pair and selected through the year index, rather than rbind-ing a
+  # separate full copy of every year's geometry together.
   filtered_shipping_sf <- reactive({
-    if (is.null(shipping_routes_by_year) || length(shipping_years) == 0) return(NULL)
+    if (is.null(shipping_routes) || length(shipping_years) == 0) return(NULL)
 
     target_years <- switch(input$time_mode,
                            "exact"      = shipping_years[shipping_years == input$year_filter],
@@ -1057,20 +1189,28 @@ server <- function(input, output, session) {
                                                            shipping_years <= input$year_range[2]],
                            "all"        = shipping_years
     )
+    if (length(target_years) == 0) return(NULL)
 
-    keys <- intersect(as.character(target_years), names(shipping_routes_by_year))
-    if (length(keys) == 0) return(NULL)
+    active <- unique(shipping_index$route_id[shipping_index$year %in% target_years])
+    if (length(active) == 0) return(NULL)
 
-    do.call(rbind, shipping_routes_by_year[keys])
+    shipping_routes[shipping_routes$route_id %in% active, ]
   })
 
-  # Redraw base routes only when filter changes
+  # Redraw base routes when the filter changes — but only while the user
+  # actually has the layer switched on. This is the single biggest saving in the
+  # app: the layer is hidden by default, and previously every session pushed the
+  # full route geometry to the browser regardless.
   observe({
-    routes <- filtered_shipping_sf()
     map <- leafletProxy("map") %>%
       clearGroup("Shipping Routes") %>%
       clearGroup("Shipping Highlight")
+
+    if (!layer_on("Shipping Routes")) return()
+
+    routes <- filtered_shipping_sf()
     if (is.null(routes) || nrow(routes) == 0) return()
+
     map %>%
       addMapPane("shipping", zIndex = 250) %>%
       addPolylines(
@@ -1085,9 +1225,12 @@ server <- function(input, output, session) {
 
   # Update highlight layer only when selection changes
   observe({
+    leafletProxy("map") %>% clearGroup("Shipping Highlight")
+
+    if (!layer_on("Shipping Routes")) return()
+
     routes   <- filtered_shipping_sf()
     location <- selected_location()
-    leafletProxy("map") %>% clearGroup("Shipping Highlight")
     if (is.null(routes) || is.null(location) || location == "") return()
     highlighted <- routes[routes$from == location | routes$to == location, ]
     if (nrow(highlighted) == 0) return()
