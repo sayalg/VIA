@@ -303,6 +303,17 @@ add_base_tiles <- function(map) {
   }
 }
 
+# leaflet.minicharts ships its JavaScript attached to the addMinicharts() call
+# itself. Over a leafletProxy that is a race: the binding injects the <script>
+# tag and then immediately invokes the method, but the script loads
+# asynchronously, so the method is often not defined yet. The call is dropped
+# with "Unknown method addMinicharts" in the browser console and the pie charts
+# never appear — silently, with no error on the R side.
+#
+# Attaching the dependency to the initial widget makes the JS load with the page,
+# so it is already in place by the time any proxy call needs it.
+minichart_deps <- utils::getFromNamespace("minichartDeps", "leaflet.minicharts")
+
 create_base_map <- function(tile_size = 256) {
   # NOTE: do NOT set preferCanvas here — see the canvas-rendering note above; it
   # silently removes every pie chart from the map.
@@ -328,7 +339,14 @@ create_base_map <- function(tile_size = 256) {
       overlayGroups = c("Land Use", "Country Status", "Railways", "Shipping Routes"),
       options       = layersControlOptions(collapsed = FALSE)
     ) %>%
-    hideGroup("Railways") %>%
+    # Railways start visible. They are NOT drawn as part of this widget, though:
+    # leaflet fires input$map_groups once the map has rendered, and the observer
+    # in the server pushes the layer in from there. So the map still paints on the
+    # small base payload and the railways arrive a moment later, rather than every
+    # visitor waiting on ~200 KB of geometry before seeing anything at all.
+    #
+    # Shipping stays hidden — it is four times the geometry of the railways and
+    # changes with the year filter, so it is only worth sending if asked for.
     hideGroup("Shipping Routes") %>%
     onRender("
       function(el, x) {
@@ -351,7 +369,11 @@ create_base_map <- function(tile_size = 256) {
           });
         }, 500);
       }
-    ")
+    ") -> m
+
+  # Load the minicharts JS with the page rather than with the first proxy call.
+  m$dependencies <- c(m$dependencies, minichart_deps())
+  m
 }
 
 add_pie_markers <- function(map, data,

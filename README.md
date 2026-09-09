@@ -217,30 +217,41 @@ If you swap in another tile source, check where it actually stops and set
 The bundle is ~2.8 MB. What actually governs whether the app feels fast, though,
 is how much geometry reaches each browser, and two rules keep that small:
 
-1. **Heavy overlays are drawn on demand.** Railways and Shipping Routes both start
-   hidden, and are only sent to the browser once the user ticks them in the layers
-   control (`input$map_groups`). A default page load ships none of their geometry.
-   If you add another heavy overlay, gate it the same way — adding it inside
-   `renderLeaflet` means every visitor pays for it whether they look at it or not.
+1. **No heavy layer is ever drawn inside `renderLeaflet`.** Both overlays are
+   pushed in afterwards via `leafletProxy`, triggered by the `input$map_groups`
+   event leaflet fires once the map has rendered. Railways start *visible* and so
+   arrive automatically a moment after the map paints; Shipping starts hidden and
+   is only sent if the user ticks it. Either way the map itself paints on a small
+   base payload. If you add another heavy overlay, follow the same pattern —
+   putting it inside `renderLeaflet` makes every visitor wait on it before they
+   see anything at all.
 2. **Geometry is pre-chewed offline**, not at request time. See
    [`Dashboard/data/README.md`](Dashboard/data/README.md) for what each cache does.
 
-Measured before and after, for the worst case where a user enables both overlays
-with the year filter on "All Years":
+The number that matters most is **server time per session**: Shiny's R process is
+single-threaded, so seconds spent serialising geometry for one visitor block
+every other visitor on that process.
 
 | | before | after |
 |---|---|---|
-| Geometry per browser, default load | 75.4 MB | **0** |
-| Geometry per browser, both layers on | 75.4 MB | **5.3 MB** |
+| Map's own first-paint payload | 75.4 MB | **379 KB, 0.17 s** |
+| Railways: server time / payload | 11.0 s / 2.7 MB | **2.6 s / 793 KB** |
+| Shipping: server time / payload | (part of the 75 MB) | **0.6 s / 1.7 MB** |
+| Railway vertices | 444,229 | 32,920 |
 | Shipping features drawn | 34,735 | 1,774 |
-| Railway SVG paths | 32,564 | 3 |
+| Redraws dragging the year slider | 20 | **3** |
 | Network build per R process | 1.3 s | 0.07 s (cache read) |
 | Literature tab, first visit | 20–40 s | instant |
 | Deployment bundle | 15 MB | 2.8 MB |
 
-Peak memory is now dominated by the shared, process-level objects rather than
+Peak memory is now dominated by shared, process-level objects rather than
 per-session serialisation, so a 1 GB shinyapps.io instance is workable. The
 earlier crashes were the ~75 MB-per-session geometry spike.
+
+**If the railway layer still feels slow**, the lever is
+`RAILWAY_MIN_SEGMENT_M` in `Tools/build_app_cache.R`. Raising it from 500 m to
+1 km roughly halves the cost again (2.6 s → 1.6 s, 793 KB → 641 KB) at the price
+of dropping from 94.6% to 88.1% of the network by length.
 
 ---
 

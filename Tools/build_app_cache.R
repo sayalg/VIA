@@ -52,6 +52,11 @@ TREE_FILE     <- file.path(DATA_DIR,
 # where this layer is actually looked at.
 SIMPLIFY_TOL_M <- 500
 
+# Railway segments shorter than this are dropped from the cache. See the railway
+# section below for why this is the single biggest lever on how long the layer
+# takes to appear.
+RAILWAY_MIN_SEGMENT_M <- 500
+
 # Coordinate decimal places kept in the cache. 4 dp is ~11 m at the equator.
 COORD_DP <- 4
 
@@ -115,15 +120,38 @@ message(sprintf("  raw: %d features, %s in memory",
 
 # app.R colours by fclass and nothing else; every other column is dead weight
 # that would be serialised to the browser.
-africa_railways <- rail_raw %>%
-  select(fclass) %>%
+rail_slim <- rail_raw %>% select(fclass)
+
+# Drop very short segments. OpenStreetMap splits a railway at every change of
+# attribute, so the raw extract is dominated by fragments: the median segment is
+# 355 m and a quarter of them are under 100 m — sidings, yard tracks and
+# bookkeeping splits, none of which are visible at the zooms this map is used at.
+# They are, however, most of the cost: each one keeps at least two vertices no
+# matter how hard the geometry is simplified.
+#
+# At 500 m the layer keeps ~95% of the network by length for ~40% of the
+# vertices. Raise this to trade more of the network away for more speed, or set
+# it to 0 to keep everything.
+seg_len_m <- as.numeric(sf::st_length(sf::st_transform(rail_slim, 3857)))
+kept      <- rail_slim[seg_len_m >= RAILWAY_MIN_SEGMENT_M, ]
+message(sprintf("  segments >= %d m: %d of %d (%.1f%% of network length)",
+                RAILWAY_MIN_SEGMENT_M, nrow(kept), nrow(rail_slim),
+                100 * sum(seg_len_m[seg_len_m >= RAILWAY_MIN_SEGMENT_M]) / sum(seg_len_m)))
+
+africa_railways <- kept %>%
   simplify_m() %>%
   group_by(fclass) %>%
-  summarise(.groups = "drop") %>%
+  # st_combine, NOT the st_union that summarise() defaults to. st_union nodes the
+  # lines at every intersection, which added ~50,000 vertices here for no visible
+  # benefit; st_combine just collects the geometries.
+  summarise(geometry = sf::st_combine(geometry), .groups = "drop") %>%
   round_coords()
 
-message(sprintf("  cached: %d features (one per railway type), %s in memory",
-                nrow(africa_railways), fmt(object.size(africa_railways))))
+message(sprintf("  cached: %d features (one per railway type), %d vertices, %s in memory",
+                nrow(africa_railways),
+                sum(vapply(sf::st_geometry(africa_railways),
+                           function(g) nrow(sf::st_coordinates(g)), numeric(1))),
+                fmt(object.size(africa_railways))))
 saveRDS(africa_railways, file.path(DATA_DIR, "africa_railways.rds"), compress = "xz")
 
 # ================================================================================
