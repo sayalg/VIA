@@ -72,6 +72,28 @@ ESRI_IMAGERY_MAX_NATIVE_ZOOM <- 19
 ESRI_GRAY_MAX_NATIVE_ZOOM    <- 16
 MAP_MAX_ZOOM                 <- 19
 
+# ---- A note on canvas rendering ---------------------------------------------
+# The railway layer is ~120,000 vertices and the shipping layer ~117,000, so
+# rendering them to a <canvas> rather than SVG is the obvious next optimisation.
+# Three approaches were tried against this stack (leaflet 2.2.3, which bundles
+# Leaflet 1.3.1) and all three were backed out:
+#
+#   * leafletOptions(preferCanvas = TRUE) — works, but it is map-wide, and
+#     L.Minichart extends L.CircleMarker. On canvas the pie charts have no DOM
+#     container to draw into and silently disappear: the layer count drops from
+#     120 to 1. Do not set this without dealing with the minicharts first.
+#   * pathOptions(renderer = htmlwidgets::JS("L.canvas()")) — the JS() value does
+#     not survive a leafletProxy() call; the layer is silently never added.
+#   * Overriding map._getPaneRenderer() in onRender to hand the two custom panes
+#     a canvas renderer — the shim itself works (verified in the browser: adding
+#     a polyline to that pane by hand renders on canvas), but layers added
+#     through leafletProxy stop arriving, with no error on either side.
+#
+# Both layers therefore still render as SVG. That is much less costly than it
+# used to be: the cache in Tools/build_app_cache.R merges the railways into one
+# feature per type, so this is 3 path elements rather than 32,564. What remains
+# is the ~5 MB of geometry itself, which is bounded by the shape of the data.
+
 # ---- Data paths -------------------------------------------------------------
 DATA_DIR <- "data"
 
@@ -282,9 +304,13 @@ add_base_tiles <- function(map) {
 }
 
 create_base_map <- function(tile_size = 256) {
+  # NOTE: do NOT set preferCanvas here — see the canvas-rendering note above; it
+  # silently removes every pie chart from the map.
   leaflet(options = leafletOptions(maxZoom = MAP_MAX_ZOOM)) %>%
     addMapPane("countryStatus", zIndex = 200) %>%
-    addMapPane("charts",        zIndex = 400) %>%
+    # Above the shipping (250) and railway (300) panes, so the pie charts are
+    # never buried under the overlay lines.
+    addMapPane("charts",        zIndex = 450) %>%
     add_base_tiles() %>%
     addProviderTiles(
       providers$Esri.WorldImagery,
@@ -567,60 +593,9 @@ add_railway_layer <- function(map, railways = africa_railways) {
     )
 }
 
-add_shipping_layer <- function(map, routes_sf, highlight_location = NULL) {
-  map <- clearGroup(map, "Shipping Routes")
-  if (is.null(routes_sf) || nrow(routes_sf) == 0) return(map)
-
-  # Add the map pane
-  map <- map %>% addMapPane("shipping", zIndex = 250)
-
-  if (!is.null(highlight_location) && highlight_location != "") {
-    # Split routes into highlighted and non-highlighted
-    routes_sf$is_highlighted <- (routes_sf$from == highlight_location |
-                                   routes_sf$to == highlight_location)
-
-    # Add non-highlighted routes first (low opacity)
-    non_highlighted <- routes_sf[!routes_sf$is_highlighted, ]
-    if (nrow(non_highlighted) > 0) {
-      map <- map %>%
-        addPolylines(
-          data    = non_highlighted,
-          color   = "#0077b6",
-          weight  = 1,
-          opacity = 0.1,
-          group   = "Shipping Routes",
-          options = pathOptions(pane = "shipping")
-        )
-    }
-
-    # Add highlighted routes on top (high opacity)
-    highlighted <- routes_sf[routes_sf$is_highlighted, ]
-    if (nrow(highlighted) > 0) {
-      map <- map %>%
-        addPolylines(
-          data    = highlighted,
-          color   = "#d62728",
-          weight  = 2.5,
-          opacity = 0.85,
-          group   = "Shipping Routes",
-          options = pathOptions(pane = "shipping")
-        )
-    }
-  } else {
-    # No selection: show all routes with default styling
-    map <- map %>%
-      addPolylines(
-        data    = routes_sf,
-        color   = "#0077b6",
-        weight  = 1,
-        opacity = 0.4,
-        group   = "Shipping Routes",
-        options = pathOptions(pane = "shipping")
-      )
-  }
-
-  map
-}
+# NOTE: an add_shipping_layer() helper used to live here. It was orphaned when
+# the shipping layer moved to the year-indexed cache and the draw-on-demand
+# observers in the server, and has been removed rather than left to rot.
 
 # ================================================================================
 # NETWORK BUILDERS  (served from the offline cache; computed only as a fallback)
@@ -824,6 +799,28 @@ ui <- page_navbar(
   nav_panel(
     title = tags$span(icon("globe"), "Distribution Map"),
     value = "map_tab",
+
+    tags$div(
+      class = "map-banner",
+      tags$h2("Mapping the invasion of ", tags$em("Anopheles stephensi")),
+      tags$p(
+        "An urban malaria vector native to South Asia and the Arabian Peninsula, ",
+        tags$em("An. stephensi"), " has spread across the Horn of Africa and beyond ",
+        "since 2012. This atlas brings together COI mitochondrial haplotypes from ",
+        "field collections to show where each lineage has been found, and which ",
+        "populations are genetically connected."
+      ),
+      tags$div(
+        class = "banner-hint",
+        icon("circle-info"),
+        tags$span(
+          " Each pie chart is one collection site, split by haplotype — click it for a breakdown. ",
+          "Use the ", tags$strong("Temporal Filter"), " to watch the range expand through time, ",
+          "and the ", tags$strong("layers control"), " on the map to overlay railways and ",
+          "shipping routes as possible corridors of spread."
+        )
+      )
+    ),
 
     layout_sidebar(
       fillable = FALSE,
@@ -1118,7 +1115,12 @@ server <- function(input, output, session) {
   # input$map_groups holds the overlay groups the user currently has ticked.
   # Both heavy layers are hidden by default, so gating on this means a first page
   # load ships none of their geometry.
-  railways_drawn <- reactiveVal(FALSE)
+  #
+  # Once geometry has been sent it is never cleared on untick — Leaflet hides the
+  # group client-side, so switching a layer back on is instant and costs nothing.
+  # Geometry is only re-sent when the data it represents actually changes.
+  railways_drawn      <- reactiveVal(FALSE)
+  shipping_drawn_ids  <- reactiveVal(NULL)
 
   layer_on <- function(name) {
     isTRUE(name %in% input$map_groups)
@@ -1197,19 +1199,36 @@ server <- function(input, output, session) {
     shipping_routes[shipping_routes$route_id %in% active, ]
   })
 
-  # Redraw base routes when the filter changes — but only while the user
-  # actually has the layer switched on. This is the single biggest saving in the
-  # app: the layer is hidden by default, and previously every session pushed the
-  # full route geometry to the browser regardless.
+  # Redraw base routes when the filter changes — but only while the user actually
+  # has the layer switched on, and only when the filter genuinely changes which
+  # routes are selected.
+  #
+  # That second condition matters more than it looks. Most years share almost the
+  # same route set: in cumulative mode, 17 of the 19 year steps select an
+  # identical set. Without this check, dragging the year slider (or letting the
+  # animation run) re-sent all 1,774 polylines on every tick for no visible
+  # change.
   observe({
+    on     <- layer_on("Shipping Routes")
+    routes <- filtered_shipping_sf()   # take the dependency even while hidden, so
+                                       # switching the layer on picks up any
+                                       # filter change made in the meantime
+
+    if (!on) return()                  # hidden: leave whatever is drawn in place
+
+    ids <- if (is.null(routes) || nrow(routes) == 0) {
+      character(0)
+    } else {
+      sort(routes$route_id)
+    }
+    if (identical(ids, shipping_drawn_ids())) return()   # nothing to redraw
+    shipping_drawn_ids(ids)
+
     map <- leafletProxy("map") %>%
       clearGroup("Shipping Routes") %>%
       clearGroup("Shipping Highlight")
 
-    if (!layer_on("Shipping Routes")) return()
-
-    routes <- filtered_shipping_sf()
-    if (is.null(routes) || nrow(routes) == 0) return()
+    if (length(ids) == 0) return()
 
     map %>%
       addMapPane("shipping", zIndex = 250) %>%
@@ -1234,6 +1253,8 @@ server <- function(input, output, session) {
     if (is.null(routes) || is.null(location) || location == "") return()
     highlighted <- routes[routes$from == location | routes$to == location, ]
     if (nrow(highlighted) == 0) return()
+    # Added after the base routes, so it draws on top of them within the shared
+    # shipping-pane canvas.
     leafletProxy("map") %>%
       addPolylines(
         data    = highlighted,

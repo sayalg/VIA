@@ -316,6 +316,67 @@ table.dataTable.table-striped tbody tr:nth-child(odd) {
 }
 
 /* ============================================================
+   MAP INTRO BANNER
+   ============================================================ */
+
+.map-banner {
+  background: linear-gradient(135deg, #154734 0%, #0f3426 100%);
+  border-left: 5px solid #FFB81C;
+  border-radius: 0.6rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10);
+  padding: 1.15rem 1.5rem;
+  margin-bottom: 1rem;
+  color: #ffffff;
+}
+
+.map-banner h2 {
+  font-family: 'Merriweather', serif;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin: 0 0 0.45rem;
+  color: #ffffff;
+}
+
+.map-banner p {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.88);
+  max-width: 78ch;
+}
+
+.map-banner em {
+  font-style: italic;
+  color: #FFB81C;
+}
+
+.map-banner h2 em {
+  color: #FFB81C;
+}
+
+.map-banner .banner-hint {
+  margin-top: 0.7rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.72);
+  max-width: 88ch;
+}
+
+.map-banner .banner-hint strong {
+  color: #FFB81C;
+  font-weight: 600;
+}
+
+.map-banner .banner-hint .fa,
+.map-banner .banner-hint svg {
+  color: #FFB81C;
+  margin-right: 0.25rem;
+}
+
+/* ============================================================
    RESPONSIVE TWEAKS
    ============================================================ */
 
@@ -332,5 +393,17 @@ table.dataTable.table-striped tbody tr:nth-child(odd) {
 
   .navbar-brand span {
     font-size: 0.95rem;
+  }
+
+  .map-banner {
+    padding: 0.95rem 1.1rem;
+  }
+
+  .map-banner h2 {
+    font-size: 1.02rem;
+  }
+
+  .map-banner p {
+    font-size: 0.83rem;
   }
 }
