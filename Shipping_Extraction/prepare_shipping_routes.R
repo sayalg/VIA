@@ -13,7 +13,7 @@
 # This is the RAW extract, with each from-to pair repeated once per year it was
 # active (~35k features for ~1.8k distinct routes). It is not read by the app
 # directly. Run Tools/build_app_cache.R afterwards to deduplicate it into the
-# Dashboard/data/shipping_routes.rds that the dashboard actually loads.
+# shipping layer in Dashboard/data/map_layers.rds that the dashboard loads.
 # ================================================================================
 
 library(sf)

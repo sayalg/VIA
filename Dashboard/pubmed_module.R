@@ -387,11 +387,11 @@ pubBrowserUI <- function(id) {
         div(class = "pb-ctrl-group",
           span(class = "pb-ctrl-label", "From"),
           selectInput(ns("year_from"), label = NULL,
-                      choices = c("Any" = "", as.character(2000:2025)),
+                      choices = c("Any" = "", as.character(2000:format(Sys.Date(), "%Y"))),
                       selected = "", width = "85px"),
           span(class = "pb-ctrl-label", "To"),
           selectInput(ns("year_to"), label = NULL,
-                      choices = c("Any" = "", as.character(2000:2025)),
+                      choices = c("Any" = "", as.character(2000:format(Sys.Date(), "%Y"))),
                       selected = "", width = "85px")
         ),
 

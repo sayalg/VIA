@@ -1,276 +1,74 @@
 # ---- Packages ----
+# Only what the running app needs. Everything used to *build* the data — geometry
+# simplification, the invasive-status spreadsheet, country polygons, StrainHub,
+# igraph layouts, geocoding — lives in Tools/build_app_cache.R, so the server
+# installs and loads far less and every R process starts faster.
 library(shiny)
 library(bslib)
 library(shinycssloaders)
 library(leaflet)
 library(leaflet.minicharts)
-library(tidyverse)
-library(tidygeocoder)
-library(htmlwidgets)
-library(htmltools)
-library(sf)
-library(rnaturalearth)
-library(rnaturalearthdata)
-library(readxl)
+library(dplyr)
+library(tidyr)
+library(sf)           # country-status polygons
 library(visNetwork)
-library(ape)
-library(stringr)
-library(httr)
-library(xml2)
 
-local({
-  for (pkg in c("igraph",      # visIgraphLayout(); centrality in make_transnet()
-                "castor",      # asr_max_parsimony() in make_transnet()
-                "hash",        # hash() in make_transnet()
-                "plyr",        # count() in make_transnet()
-                "tibble",      # rowid_to_column() in make_transnet()
-                "magrittr",    # %>% in strainhub_transnet.R
-                "tidytree")) { # tidytree::drop.tip()
-    if (!requireNamespace(pkg, quietly = TRUE)) {
-      stop("Required package '", pkg, "' is not installed.")
-    }
-  }
-})
-
-source("pubmed_module.R")
-
-# make_transnet(), vendored from strainhub (Apache 2.0).
-# Strainhub_transnet.R documents the full reasoning.
-source("strainhub_transnet.R")
+source("pubmed_module.R")   # also loads stringr, httr, xml2
 
 # ---- Configuration ----
-MAPBOX_TOKEN      <- "pk.eyJ1Ijoic2F5YWxnIiwiYSI6ImNtaWdha3Y4eDA1YmczZXEybjZvZjE0YTQifQ.T_HqxBxbmcdViI2L0LIzgQ"
-MAPBOX_STYLE      <- "https://api.mapbox.com/styles/v1/sayalg/cmkr2q0c3000q01s87umrehau/tiles/256/{z}/{x}/{y}@2x?access_token={accessToken}"
-INVALID_LOCATIONS <- c("Laboratory")
+MAPBOX_TOKEN <- "pk.eyJ1Ijoic2F5YWxnIiwiYSI6ImNtaWdha3Y4eDA1YmczZXEybjZvZjE0YTQifQ.T_HqxBxbmcdViI2L0LIzgQ"
+MAPBOX_STYLE <- "https://api.mapbox.com/styles/v1/sayalg/cmkr2q0c3000q01s87umrehau/tiles/256/{z}/{x}/{y}@2x?access_token={accessToken}"
 
 # ---- Basemap ----------------------------------------------------------------
-# CARTO now requires an API key for the raster basemap tiles at
-# basemaps.cartocdn.com, which is what providers$CartoDB.Positron points at.
-# Without a key, CARTO serves tiles stamped "requires an API key" — visible as
-# soon as you zoom past the levels their CDN still has cached.
+# CARTO now requires an API key for basemaps.cartocdn.com raster tiles (free:
+# https://carto.com/basemaps/apikey). Without one, CARTO serves tiles stamped
+# "requires an API key". Set CARTO_API_KEY (on shinyapps.io:
+# rsconnect::deployApp(..., envVars = "CARTO_API_KEY")) for CartoDB Positron;
+# otherwise the keyless Esri Light Gray Canvas is used.
 #
-# A key is free (fair use: 5M tile requests/month) and needs no CARTO account:
-#     https://carto.com/basemaps/apikey
-#
-# Set it here, or leave it empty and set the CARTO_API_KEY environment variable
-# (on shinyapps.io: rsconnect::deployApp(..., envVars = "CARTO_API_KEY")).
-#
-# With a key   -> CartoDB Positron, exactly as before, usable to zoom 20.
-# Without one  -> Esri Light Gray Canvas, no key required, visually similar.
-#                 Esri only renders that layer to zoom 16, so maxNativeZoom is
-#                 pinned there and Leaflet upscales beyond it. Without that pin
-#                 Esri returns a "no data here" placeholder tile at z17+, which
-#                 would just be a different broken-looking map.
-#
-# Note CARTO have said the raster basemaps are on a retirement path, so the
-# keyless fallback is the more durable option of the two.
+# Esri only renders Gray Canvas to zoom 16 and World Imagery to 19, returning a
+# "no data" placeholder beyond, so maxNativeZoom is pinned and Leaflet upscales.
 CARTO_API_KEY <- Sys.getenv("CARTO_API_KEY", "")
-
-# Esri's World Imagery (the Satellite layer) has its own ceiling: real tiles to
-# zoom 19, the same placeholder beyond.
 ESRI_IMAGERY_MAX_NATIVE_ZOOM <- 19
 ESRI_GRAY_MAX_NATIVE_ZOOM    <- 16
 MAP_MAX_ZOOM                 <- 19
 
-# ---- A note on canvas rendering ---------------------------------------------
-# The railway layer is ~120,000 vertices and the shipping layer ~117,000, so
-# rendering them to a <canvas> rather than SVG is the obvious next optimisation.
-# Three approaches were tried against this stack (leaflet 2.2.3, which bundles
-# Leaflet 1.3.1) and all three were backed out:
-#
-#   * leafletOptions(preferCanvas = TRUE) — works, but it is map-wide, and
-#     L.Minichart extends L.CircleMarker. On canvas the pie charts have no DOM
-#     container to draw into and silently disappear: the layer count drops from
-#     120 to 1. Do not set this without dealing with the minicharts first.
-#   * pathOptions(renderer = htmlwidgets::JS("L.canvas()")) — the JS() value does
-#     not survive a leafletProxy() call; the layer is silently never added.
-#   * Overriding map._getPaneRenderer() in onRender to hand the two custom panes
-#     a canvas renderer — the shim itself works (verified in the browser: adding
-#     a polyline to that pane by hand renders on canvas), but layers added
-#     through leafletProxy stop arriving, with no error on either side.
-#
-# Both layers therefore still render as SVG. That is much less costly than it
-# used to be: the cache in Tools/build_app_cache.R merges the railways into one
-# feature per type, so this is 3 path elements rather than 32,564. What remains
-# is the ~5 MB of geometry itself, which is bounded by the shape of the data.
+# NOTE: do not set leafletOptions(preferCanvas = TRUE). L.Minichart extends
+# L.CircleMarker, so on canvas the pie charts lose their DOM container and
+# silently vanish (120 chart layers drop to 1).
 
-# ---- Data paths -------------------------------------------------------------
+# ================================================================================
+# DATA — built by Tools/build_app_cache.R (runs once per R process)
+# ================================================================================
 DATA_DIR <- "data"
 
-SAMPLES_PATH  <- file.path(DATA_DIR, "FinalCOI_metadata.csv")
-METADATA_PATH <- file.path(DATA_DIR, "FinalCOI_metadata_w_coor.csv")
-INVASIVE_PATH <- file.path(DATA_DIR, "MTM_INVASIVE_VECTOR_SPECIES_20251205.xlsx")
-TREE_PATH     <- file.path(DATA_DIR, "COI_subsampled20_per_country_year.aligned.raxml.bestTree")
-RAILWAYS_PATH <- file.path(DATA_DIR, "africa_railways.rds")
-SHIPPING_PATH <- file.path(DATA_DIR, "shipping_routes.rds")
-
-# Fail fast and loudly at startup rather than with an opaque error mid-render.
 local({
-  required <- c(SAMPLES_PATH, METADATA_PATH, INVASIVE_PATH, TREE_PATH)
-  absent   <- required[!file.exists(required)]
-  if (length(absent) > 0) {
-    stop("Missing required data file(s): ", paste(absent, collapse = ", "),
-         "\nThe app must be run with Dashboard/ as the working directory.")
+  need   <- file.path(DATA_DIR, c("genes.rds", "map_layers.rds"))
+  absent <- need[!file.exists(need)]
+  if (length(absent)) {
+    stop("Missing ", paste(absent, collapse = ", "), ". From the repository root run:\n",
+         "  Rscript Tools/build_app_cache.R\n",
+         "and start the app with Dashboard/ as the working directory.", call. = FALSE)
   }
 })
 
-# ================================================================================
-# DATA LOADING  (runs once per R process, shared by all sessions)
-# ================================================================================
+# genes: one entry per folder in Input_Files/genes/ — map table, haplotype
+# palette, years, StrainHub + country networks, tree figure path.
+genes      <- readRDS(file.path(DATA_DIR, "genes.rds"))
+map_layers <- readRDS(file.path(DATA_DIR, "map_layers.rds"))
+shipping   <- map_layers$shipping
+ddrad      <- map_layers$ddrad   # NULL when there is no ddRAD spreadsheet
 
-samples_df <- read.csv(SAMPLES_PATH, sep = ",", header = TRUE)
-samples_df[samples_df == ""] <- NA
-
-invasive_status <- read_excel(INVASIVE_PATH, sheet = "Data")
-invasive_status[invasive_status == ""] <- NA
-
-samples_df <- samples_df %>%
-  filter(
-    !str_detect(City.Town,    paste(INVALID_LOCATIONS, collapse = "|")) | is.na(City.Town),
-    !str_detect(County.State, paste(INVALID_LOCATIONS, collapse = "|")) | is.na(County.State)
-  )
-
-# ---- Geocode Missing Coordinates ----
-# NOTE: This function makes one API call per missing row and will be extremely
-# slow on large datasets. It is kept here for reference only. Run it once
-# offline, save the result, then load the pre-geocoded CSV below.
-fill_missing_coords <- function(df,
-                                country_col = "Country",
-                                state_col   = "County.State",
-                                city_col    = "City.Town",
-                                lat_col     = "Latitude",
-                                lon_col     = "Longitude",
-                                method      = "osm") {
-  df %>%
-    mutate(row_id = row_number()) %>%
-    group_split(row_id) %>%
-    map_dfr(function(row) {
-      if (!is.na(row[[lat_col]]) && !is.na(row[[lon_col]])) return(row)
-      address <- if (!is.na(row[[city_col]]) && row[[city_col]] != "") {
-        str_c(row[[city_col]], row[[state_col]], row[[country_col]], sep = ", ")
-      } else {
-        row[[country_col]]
-      }
-      geo <- tryCatch(
-        tidygeocoder::geocode(
-          tibble(address = address),
-          address = address,
-          method  = method,
-          lat     = "lat",
-          long    = "lon",
-          quiet   = TRUE
-        ),
-        error = function(e) NULL
-      )
-      if (is.null(geo) || is.na(geo$lat) || is.na(geo$lon)) return(row)
-      row[[lat_col]] <- geo$lat
-      row[[lon_col]] <- geo$lon
-      row
-    }) %>%
-    select(-row_id)
+if (!seed_pubmed_cache(file.path(DATA_DIR, "pubmed_snapshot.rds"))) {
+  message("No PubMed snapshot found — the Literature tab will fetch live on first visit.")
 }
 
-# Map data: loaded with base read.csv to match v2 semantics exactly (empty
-# strings are kept as "", not coerced to NA).
-df_geo   <- read.csv(METADATA_PATH, sep = ",", header = TRUE)
-df_haplo <- df_geo %>% filter(!is.na(Haplotype))
-
-# Network data: loaded ONCE with readr::read_csv (empty strings -> NA), matching
-# v2's per-render reads. This single object is shared by BOTH network builders
-# below, replacing the two separate disk reads v2 performed on every render.
-metadata_full <- readr::read_csv(METADATA_PATH, col_names = TRUE, show_col_types = FALSE)
-
-# ---- Cached world polygons (loaded once) ----
-world_polygons <- ne_countries(returnclass = "sf") %>%
-  mutate(name_clean = tolower(admin))
-
-# ---- Africa railways (cache built by Tools/build_app_cache.R) ----
-# One MULTILINESTRING per railway type (rail / light_rail / narrow_gauge /
-# preserved), simplified to 500 m and rounded to 4 dp. The raw OSM extract is
-# 32,564 separate features and ~16 MB of GeoJSON per browser; this is 3 features
-# and ~2.6 MB, which is the difference between a map that pans and one that
-# doesn't. Rebuild with: Rscript Tools/build_app_cache.R
-africa_railways <- if (file.exists(RAILWAYS_PATH)) {
-  readRDS(RAILWAYS_PATH)
-} else {
-  warning("africa_railways.rds not found — railway layer will be hidden. ",
-          "Run: Rscript Tools/build_app_cache.R")
-  NULL
+# Shipping routes are stored as one pre-serialised GeoJSON Feature per route.
+# Selecting routes is then string pasting, not geometry serialisation.
+ship_geojson <- function(ids) {
+  paste0('{"type":"FeatureCollection","features":[',
+         paste(shipping$features[ids], collapse = ","), "]}")
 }
-
-# ---- Shipping routes (cache built by Tools/build_app_cache.R) ----
-# list(routes = sf(route_id, from, to, geometry),
-#      route_years = data.frame(route_id, year),
-#      years = integer vector)
-#
-# The raw data repeated each from-to pair once per year — 34,735 features where
-# only 1,774 are distinct, all drawn on top of each other. Geometry is now stored
-# once and the year index says which routes were active when.
-shipping_cache <- if (file.exists(SHIPPING_PATH)) {
-  readRDS(SHIPPING_PATH)
-} else {
-  warning("shipping_routes.rds not found — shipping layer disabled. ",
-          "Run: Rscript Tools/build_app_cache.R")
-  NULL
-}
-
-shipping_routes <- if (!is.null(shipping_cache)) shipping_cache$routes      else NULL
-shipping_index  <- if (!is.null(shipping_cache)) shipping_cache$route_years else NULL
-shipping_years  <- if (!is.null(shipping_cache)) shipping_cache$years       else integer(0)
-
-# ---- Pre-built networks (cache built by Tools/build_app_cache.R) ----
-# Both node/edge tables are computed offline, so no session pays for the
-# parsimony reconstruction or the centrality maths.
-NETWORKS_PATH <- file.path(DATA_DIR, "networks.rds")
-networks_cache <- if (file.exists(NETWORKS_PATH)) {
-  readRDS(NETWORKS_PATH)
-} else {
-  warning("networks.rds not found — networks will be computed at runtime. ",
-          "Run: Rscript Tools/build_app_cache.R")
-  NULL
-}
-
-# ---- PubMed snapshot (cache built by Tools/build_app_cache.R) ----
-# Seeds the Literature tab so the first visitor is not left waiting 20-40 s for
-# the live NCBI fetch. Optional — the module falls back to fetching live.
-PUBMED_SNAPSHOT_PATH <- file.path(DATA_DIR, "pubmed_snapshot.rds")
-if (!seed_pubmed_cache(PUBMED_SNAPSHOT_PATH)) {
-  message("No PubMed snapshot found — the Literature tab will fetch live on ",
-          "first visit. Run: Rscript Tools/build_app_cache.R")
-}
-
-# ================================================================================
-# COLOR UTILITIES
-# ================================================================================
-
-create_high_contrast_palette <- function(n) {
-  base_colors <- c(
-    "#E41A1C", "#4DAF4A", "#377EB8", "#FF7F00", "#984EA3",
-    "#A65628", "#F781BF", "#999999", "#66C2A5", "#FC8D62",
-    "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494",
-    "#B3B3B3", "#1B9E77", "#D95F02", "#7570B3", "#E7298A",
-    "#66A61E", "#E6AB02", "#A6761D", "#666666"
-  )
-  if (n <= length(base_colors)) return(base_colors[seq_len(n)])
-  colorRampPalette(base_colors)(n)
-}
-
-create_haplotype_palette <- function(data, category_col = "Haplotype") {
-  all_haplotypes <- data %>%
-    filter(!is.na(.data[[category_col]])) %>%
-    pull(.data[[category_col]]) %>%
-    unique()
-  numeric_parts <- as.numeric(str_extract(all_haplotypes, "\\d+"))
-  if (!all(is.na(numeric_parts))) {
-    all_haplotypes <- all_haplotypes[order(numeric_parts, na.last = TRUE)]
-  }
-  colors <- create_high_contrast_palette(length(all_haplotypes))
-  setNames(as.character(colors), all_haplotypes)
-}
-
-# Palette depends only on static data, so compute it once at startup rather than
-# once per session.
-haplotype_palette <- create_haplotype_palette(df_haplo, category_col = "Haplotype")
 
 # ================================================================================
 # MAP FUNCTIONS
@@ -303,25 +101,19 @@ add_base_tiles <- function(map) {
   }
 }
 
-# leaflet.minicharts ships its JavaScript attached to the addMinicharts() call
-# itself. Over a leafletProxy that is a race: the binding injects the <script>
-# tag and then immediately invokes the method, but the script loads
-# asynchronously, so the method is often not defined yet. The call is dropped
-# with "Unknown method addMinicharts" in the browser console and the pie charts
-# never appear — silently, with no error on the R side.
-#
-# Attaching the dependency to the initial widget makes the JS load with the page,
-# so it is already in place by the time any proxy call needs it.
+# leaflet.minicharts ships its JavaScript attached to the addMinicharts() call.
+# Over a leafletProxy that races: the method is invoked before the script has
+# loaded and is dropped as "Unknown method addMinicharts". Attaching the
+# dependency to the initial widget loads it with the page instead.
 minichart_deps <- utils::getFromNamespace("minichartDeps", "leaflet.minicharts")
 
 create_base_map <- function(tile_size = 256) {
-  # NOTE: do NOT set preferCanvas here — see the canvas-rendering note above; it
-  # silently removes every pie chart from the map.
-  leaflet(options = leafletOptions(maxZoom = MAP_MAX_ZOOM)) %>%
+  m <- leaflet(options = leafletOptions(maxZoom = MAP_MAX_ZOOM)) %>%
+    # Below the default overlay pane (400) that the pie charts draw in, so no
+    # overlay line is ever drawn over a pie.
     addMapPane("countryStatus", zIndex = 200) %>%
-    # Above the shipping (250) and railway (300) panes, so the pie charts are
-    # never buried under the overlay lines.
-    addMapPane("charts",        zIndex = 450) %>%
+    addMapPane("shipping",      zIndex = 250) %>%
+    addMapPane("railways",      zIndex = 300) %>%
     add_base_tiles() %>%
     addProviderTiles(
       providers$Esri.WorldImagery,
@@ -339,53 +131,60 @@ create_base_map <- function(tile_size = 256) {
       overlayGroups = c("Land Use", "Country Status", "Railways", "Shipping Routes"),
       options       = layersControlOptions(collapsed = FALSE)
     ) %>%
-    # Railways start visible. They are NOT drawn as part of this widget, though:
-    # leaflet fires input$map_groups once the map has rendered, and the observer
-    # in the server pushes the layer in from there. So the map still paints on the
-    # small base payload and the railways arrive a moment later, rather than every
-    # visitor waiting on ~200 KB of geometry before seeing anything at all.
-    #
-    # Shipping stays hidden — it is four times the geometry of the railways and
-    # changes with the year filter, so it is only worth sending if asked for.
-    hideGroup("Shipping Routes") %>%
-    onRender("
-      function(el, x) {
-        var map = this;
-        var attached = {};
-        // Poll for freshly-drawn minicharts and wire a click handler to each.
-        // Charts are re-drawn whenever the temporal filter changes, so the
-        // interval keeps running, but it only touches charts it hasn't seen.
-        map._minichartClickPoll = setInterval(function() {
-          if (!map._minicharts) return;
-          map._minicharts.forEach(function(chart) {
-            var layerId = chart.options.layerId;
-            if (!layerId || attached[layerId]) return;
-            var chartEl = chart._container;
-            if (!chartEl) return;
-            attached[layerId] = true;
-            chartEl.addEventListener('click', function(e) {
-              Shiny.setInputValue('map_marker_click', {id: layerId}, {priority: 'event'});
-            }, false);
-          });
-        }, 500);
-      }
-    ") -> m
+    # Railways start visible but are pushed in by the server once the map has
+    # rendered; Shipping starts hidden and is only sent if ticked.
+    hideGroup("Shipping Routes")
 
-  # Load the minicharts JS with the page rather than with the first proxy call.
   m$dependencies <- c(m$dependencies, minichart_deps())
   m
 }
 
-add_pie_markers <- function(map, data,
+# Genome-wide (ddRAD) block for the pop-up of a pie at lat/lon in `country`, or
+# "" if no ddRAD site matches. A match is the nearest ddRAD site in the same
+# country within DDRAD_MATCH_KM: the spreadsheet's coordinates for a town differ
+# from the COI ones by up to ~3 km (Hargeisa), and Loyada (Djibouti) is 4 km
+# from Lawyacado (Somalia), hence the country check.
+DDRAD_MATCH_KM <- 5
+
+ddrad_popup <- function(lat, lon, country) {
+  if (is.null(ddrad) || !nrow(ddrad) || is.na(country)) return("")
+  r  <- pi / 180
+  km <- 6371 * 2 * asin(sqrt(sin((ddrad$lat - lat) * r / 2)^2 +
+                             cos(lat * r) * cos(ddrad$lat * r) * sin((ddrad$lon - lon) * r / 2)^2))
+  km[tolower(trimws(ddrad$country)) != tolower(trimws(country))] <- Inf
+  i <- which.min(km)
+  if (km[i] > DDRAD_MATCH_KM) return("")
+  s <- ddrad[i, ]
+
+  src <- htmltools::htmlEscape(s$short)
+  if (!is.na(s$doi)) src <- sprintf("<a href='%s' target='_blank' rel='noopener'>%s</a>", s$doi, src)
+  row <- function(label, value, tip) sprintf(
+    "<tr title='%s'><td style='padding:1px 8px 1px 0;color:#555'>%s</td><td>%s</td></tr>", tip, label, value)
+
+  paste0(
+    "<div style='margin-top:8px;padding-top:6px;border-top:1px solid #e3e3e3'>",
+    "<div style='font-size:12px;font-weight:600'>Genome-wide (ddRAD-seq) ",
+    "<a href='#' title='What do these mean?' style='text-decoration:none' ",
+    "onclick=\"Shiny.setInputValue('show_genomic_about', Date.now()); return false;\">&#9432;</a></div>",
+    "<div style='color:#666;font-size:11px;margin:1px 0 4px'>Site: ", htmltools::htmlEscape(s$site), "</div>",
+    "<table style='font-size:12px;border-collapse:collapse'>",
+    row("Samples", s$n, "Individuals genotyped at this site"),
+    row("&pi;", formatC(s$pi, format = "f", digits = 3), "Nucleotide diversity"),
+    row("S", format(s$S, big.mark = ","), "Segregating (polymorphic) sites"),
+    row("Tajima&#39;s D", formatC(s$tajima_d, format = "f", digits = 2), "Compares nucleotide diversity with the number of segregating sites"),
+    "</table>",
+    "<div style='color:#888;font-size:11px;margin-top:3px'>", src, "</div></div>"
+  )
+}
+
+add_pie_markers <- function(map, data, color_palette,
                             lat_col       = "Latitude",
                             lon_col       = "Longitude",
                             category_col  = "Haplotype",
                             city_col      = "City.Town",
                             state_col     = "County.State",
                             country_col   = "Country",
-                            radius        = 20,
-                            add_legend    = TRUE,
-                            color_palette = NULL) {
+                            radius        = 20) {
 
   city_lookup <- data %>%
     filter(!is.na(.data[[lat_col]]), !is.na(.data[[lon_col]])) %>%
@@ -405,6 +204,10 @@ add_pie_markers <- function(map, data,
           }
         }
       },
+      country = {
+        countries <- .data[[country_col]][!is.na(.data[[country_col]]) & .data[[country_col]] != ""]
+        if (length(countries) > 0) names(which.max(table(countries))) else NA_character_
+      },
       .groups = "drop"
     )
 
@@ -415,21 +218,12 @@ add_pie_markers <- function(map, data,
     left_join(city_lookup, by = c(lat_col, lon_col))
 
   coords <- df_pie %>% select(all_of(c(lat_col, lon_col)))
-  pies   <- df_pie %>% select(-all_of(c(lat_col, lon_col, "city")))
+  pies   <- df_pie %>% select(-all_of(c(lat_col, lon_col, "city", "country")))
 
-  numeric_parts <- as.numeric(str_extract(colnames(pies), "\\d+"))
-  if (!all(is.na(numeric_parts))) pies <- pies[, order(numeric_parts, na.last = TRUE)]
-
-  if (!is.null(color_palette)) {
-    colors <- unname(color_palette[colnames(pies)])
-    if (any(is.na(colors))) {
-      warning("Some haplotypes not found in color_palette; using fallback colors.")
-      colors <- create_high_contrast_palette(ncol(pies))
-    }
-  } else {
-    colors <- create_high_contrast_palette(ncol(pies))
-  }
-  colors <- as.character(colors)
+  # The palette is built in haplotype-number order, so following it orders the
+  # slices the same way and guarantees every slice has a colour.
+  pies   <- pies[, intersect(names(color_palette), colnames(pies))]
+  colors <- unname(color_palette[colnames(pies)])
 
   layer_ids <- make.unique(df_pie$city)
   color_map <- setNames(colors, colnames(pies))
@@ -460,41 +254,30 @@ add_pie_markers <- function(map, data,
       "<div style='color:#666;font-size:11px;margin:3px 0 6px'>",
       total, " sample", if (total != 1) "s" else "", "</div>",
       "<table style='font-size:12px;border-collapse:collapse'>",
-      rows_html, "</table></div>"
+      rows_html, "</table>",
+      ddrad_popup(coords[[lat_col]][i], coords[[lon_col]][i], df_pie$country[i]),
+      "</div>"
     )
   }
 
   popup_html <- unlist(popup_list[layer_ids])
 
-  map_with_charts <- addMinicharts(
-    map          = map,
-    lng          = coords[[lon_col]],
-    lat          = coords[[lat_col]],
-    type         = "pie",
-    chartdata    = as.matrix(pies),
-    width        = radius,
-    height       = radius,
-    colorPalette = colors,
-    layerId      = layer_ids,
-    popup        = popupArgs(html = popup_html),
-    showLabels   = FALSE,
-    legend       = FALSE
-  )
-
-  if (add_legend) {
-    map_with_charts <- map_with_charts %>%
-      addLegend(
-        position = "bottomleft",
-        colors   = colors,
-        labels   = colnames(pies),
-        title    = "Haplotypes",
-        opacity  = 1,
-        layerId  = "haplotype_legend"
-      )
-  }
-
-  # Add invisible markers on top of pie charts to capture clicks
-  map_with_charts <- map_with_charts %>%
+  map %>%
+    addMinicharts(
+      lng          = coords[[lon_col]],
+      lat          = coords[[lat_col]],
+      type         = "pie",
+      chartdata    = as.matrix(pies),
+      width        = radius,
+      height       = radius,
+      colorPalette = colors,
+      layerId      = layer_ids,
+      popup        = popupArgs(html = popup_html),
+      showLabels   = FALSE,
+      legend       = FALSE
+    ) %>%
+    # Invisible markers over each pie: their clicks arrive as input$map_marker_click,
+    # which drives the shipping-route highlight.
     addMarkers(
       lng      = coords[[lon_col]],
       lat      = coords[[lat_col]],
@@ -507,27 +290,9 @@ add_pie_markers <- function(map, data,
       ),
       options = markerOptions(opacity = 0, zIndexOffset = 1000)
     )
-
-  map_with_charts
 }
 
-add_country_status_layer <- function(map, data,
-                                     country_col = "Country",
-                                     status_col  = "Native.Invasive",
-                                     world       = world_polygons) {
-  country_status <- data %>%
-    mutate(
-      country_clean = tolower(.data[[country_col]]),
-      status_clean  = tolower(.data[[status_col]])
-    ) %>%
-    filter(!is.na(country_clean), !is.na(status_clean)) %>%
-    count(country_clean, status_clean) %>%
-    slice_max(n, n = 1, by = country_clean) %>%
-    select(country_clean, status_clean)
-
-  world_status <- world %>%
-    left_join(country_status, by = c("name_clean" = "country_clean"))
-
+add_country_status_layer <- function(map, world = map_layers$country_status) {
   pal <- colorFactor(
     palette  = c("native" = "#4CAF50", "invasive" = "#FF9800"),
     domain   = c("native", "invasive"),
@@ -536,7 +301,7 @@ add_country_status_layer <- function(map, data,
 
   map %>%
     addPolygons(
-      data        = world_status,
+      data        = world,
       fillColor   = ~pal(status_clean),
       fillOpacity = 0.15,
       color       = "#444444",
@@ -544,7 +309,7 @@ add_country_status_layer <- function(map, data,
       opacity     = 0.5,
       group       = "Country Status",
       options     = pathOptions(pane = "countryStatus"),
-      label       = ~paste0(admin, ": ", if_else(is.na(status_clean), "No Data", status_clean))
+      label       = ~paste0(admin, ": ", ifelse(is.na(status_clean), "No Data", status_clean))
     ) %>%
     addLegend(
       position = "bottomright",
@@ -555,208 +320,27 @@ add_country_status_layer <- function(map, data,
     )
 }
 
-add_chart_interactions <- function(map) {
+# Pre-serialised at build time: the browser JSON.parse()s it, R does no geometry
+# work. Drawing this from sf used to cost 2.6 s of R time per visitor.
+add_railway_layer <- function(map) {
+  types <- map_layers$railway_types
   map %>%
-    onRender("
-      function(el, x) {
-        var map = this;
-        if (!map._minicharts) return;
-        map._minicharts.forEach(function(chart) {
-          var chartEl = chart._container;
-          if (!chartEl) return;
-          chartEl.style.position = 'absolute';
-          chartEl.style.zIndex   = 400;
-          map.getPane('charts').appendChild(chartEl);
-        });
-      }
-    ")
-}
-
-add_railway_layer <- function(map, railways = africa_railways) {
-  if (is.null(railways) || nrow(railways) == 0) return(map)
-
-  # Color by railway type
-  pal <- colorFactor(
-    palette = c(
-      "rail"          = "#4a4a4a",
-      "light_rail"    = "#8a6db5",
-      "narrow_gauge"  = "#c0622a",
-      "preserved"     = "#2e7d52"
-    ),
-    domain  = c("rail", "light_rail", "narrow_gauge", "preserved"),
-    na.color = "#888888"
-  )
-
-  map %>%
-    addMapPane("railways", zIndex = 300) %>%
-    addPolylines(
-      data        = railways,
-      color       = ~pal(fclass),
-      weight      = 1.2,
-      opacity     = 0.75,
-      group       = "Railways",
-      options     = pathOptions(pane = "railways"),
-      # The cache merges every railway of a type into one MULTILINESTRING, so
-      # there is no per-railway name to show any more. That trade buys a ~6x
-      # smaller payload and takes Leaflet from 32,564 SVG paths down to 3, which
-      # is what was making the map crawl. To get individual names back, drop the
-      # group_by(fclass)/summarise() step in Tools/build_app_cache.R and keep the
-      # `name` column — expect the slowdown to come with it.
-      label        = ~paste0("Railway type: ", fclass),
-      labelOptions = labelOptions(style = list("font-size" = "12px"))
+    addGeoJSON(
+      map_layers$railways_geojson,
+      group   = "Railways",
+      weight  = 1.2,
+      opacity = 0.75,
+      fill    = FALSE,
+      options = pathOptions(pane = "railways")
     ) %>%
     addLegend(
       position = "bottomright",
-      pal      = pal,
-      values   = railways$fclass,
+      colors   = unname(map_layers$railway_colours[types]),
+      labels   = types,
       title    = "Railway type",
       group    = "Railways",
       layerId  = "railway_legend"
     )
-}
-
-# NOTE: an add_shipping_layer() helper used to live here. It was orphaned when
-# the shipping layer moved to the year-indexed cache and the draw-on-demand
-# observers in the server, and has been removed rather than left to rot.
-
-# ================================================================================
-# NETWORK BUILDERS  (served from the offline cache; computed only as a fallback)
-# ================================================================================
-# Neither network depends on user input, so both are built offline by
-# Tools/build_app_cache.R and read straight out of networks.rds. That keeps the
-# parsimony reconstruction, the centrality maths and the tree parsing off the
-# server entirely — and means castor/hash/plyr/igraph are only touched if the
-# cache is missing.
-#
-# The runtime builders below are kept as a fallback so the app still works on a
-# checkout where the cache has not been generated yet.
-
-.app_cache <- new.env(parent = emptyenv())
-
-# ---- Panel 1: Strainhub country transmission network ----
-build_haplo_network_data <- function() {
-  if (!is.null(.app_cache$haplo_net)) return(.app_cache$haplo_net)
-
-  if (!is.null(networks_cache$haplo)) {
-    .app_cache$haplo_net <- networks_cache$haplo
-    return(.app_cache$haplo_net)
-  }
-
-  result <- tryCatch({
-    treedata <- ape::read.tree(TREE_PATH)
-    metadata <- metadata_full   # reuse the already-loaded metadata
-
-    ## Adjust column names
-    names(metadata)[names(metadata) == "FASTA.ID"]     <- "Accession"
-    names(metadata)[names(metadata) == "Accession.ID"] <- "Unique"
-
-    ## Prune Tree
-    taxa_without_data <- setdiff(treedata$tip.label, metadata$Accession)
-    pruned_tree <- tidytree::drop.tip(treedata, taxa_without_data)
-
-    ## Create Country with Haplotype column
-    metadata$haplo_concat <- paste(metadata$Country, metadata$Haplotype, sep = "_")
-
-    ## Make the Transmission Network
-    # metricsOutputFile = "" is required for deployment: the default
-    # ("StrainHub_metrics.csv") makes make_transnet() write into the working
-    # directory, which is read-only on shinyapps.io / Posit Connect and would
-    # abort the render. "" tells strainhub to skip the file entirely.
-    graph <- make_transnet(pruned_tree,
-                           metadata,
-                           columnSelection   = "Country",
-                           centralityMetric  = 3,   # Betweenness Centrality
-                           treeType          = "parsimonious",
-                           metricsOutputFile = "")
-
-    nodes <- graph$x$nodes %>%
-      mutate(shape = "dot",
-             color = "grey",
-             font.size = 35)
-
-    edges <- graph$x$edges %>%
-      left_join(nodes %>% select(id, group), by = c("from" = "id")) %>%
-      rename(group_from = group) %>%
-      left_join(nodes %>% select(id, group), by = c("to" = "id")) %>%
-      rename(group_to = group) %>%
-      mutate(arrows = "to",
-             smooth = TRUE,
-             color  = "black",
-             width  = case_when(value == 1 ~ 1, value == 2 ~ 5, value == 3 ~ 20),
-             value  = NULL,
-             length = 500)
-
-    list(nodes = nodes, edges = edges)
-  }, error = function(e) {
-    warning("build_haplo_network_data() failed: ", conditionMessage(e))
-    NULL
-  })
-
-  .app_cache$haplo_net <- result
-  result
-}
-
-# ---- Panel 2: Country connectivity (shared haplotypes) network ----
-build_country_network_data <- function() {
-  if (!is.null(.app_cache$country_net)) return(.app_cache$country_net)
-
-  if (!is.null(networks_cache$country)) {
-    .app_cache$country_net <- networks_cache$country
-    return(.app_cache$country_net)
-  }
-
-  result <- tryCatch({
-    # Clean metadata (reuse the already-loaded object)
-    metadata_clean_cn <- metadata_full %>%
-      filter(!is.na(Country) & Country != "" & Country != "NA") %>%
-      filter(!is.na(Haplotype) & Haplotype != "" & Haplotype != "NA")
-
-    # Random subsampling (20 per Country/Year)
-    set.seed(123)
-    metadata_subsampled_cn <- metadata_clean_cn %>%
-      group_by(Country, Year) %>%
-      slice_sample(n = 20) %>%
-      ungroup()
-
-    # Binary haplotype matrix
-    h_matrix_raw    <- table(metadata_subsampled_cn$Haplotype, metadata_subsampled_cn$Country)
-    h_matrix_binary <- h_matrix_raw
-    h_matrix_binary[h_matrix_binary > 0] <- 1
-
-    # Shared unique haplotype count between countries
-    country_matrix <- as.matrix(t(h_matrix_binary) %*% h_matrix_binary)
-    diag(country_matrix) <- 0
-
-    # Nodes
-    country_totals_cn <- metadata_subsampled_cn %>%
-      group_by(Country) %>%
-      summarize(n = n(), .groups = "drop")
-
-    nodes_country <- data.frame(
-      id    = seq_len(nrow(country_totals_cn)),
-      label = country_totals_cn$Country,
-      group = country_totals_cn$Country,
-      value = country_totals_cn$n,
-      title = paste("Included Samples:", country_totals_cn$n)
-    )
-
-    # Edges (upper triangle only)
-    edges_idx <- which(country_matrix > 0, arr.ind = TRUE)
-    edges_idx <- edges_idx[edges_idx[, 1] < edges_idx[, 2], , drop = FALSE]
-    links_country <- data.frame(
-      from  = edges_idx[, 1],
-      to    = edges_idx[, 2],
-      value = country_matrix[edges_idx]
-    )
-
-    list(nodes = nodes_country, links = links_country)
-  }, error = function(e) {
-    warning("build_country_network_data() failed: ", conditionMessage(e))
-    NULL
-  })
-
-  .app_cache$country_net <- result
-  result
 }
 
 # ================================================================================
@@ -769,8 +353,8 @@ app_theme <- bs_theme(
   fg            = "#1c2b3a",
   primary       = "#1a4f72",       # deep ocean blue  — navbar, buttons
   secondary     = "#2e86ab",       # mid blue         — accents
-  success       = "#4CAF50",       # native green     — matches map
-  warning       = "#FF7F00",       # invasive orange  — matches map
+  success       = "#4CAF50",
+  warning       = "#FF7F00",
   base_font     = font_google("Inter"),
   heading_font  = font_google("Merriweather"),
   code_font     = font_google("Fira Code"),
@@ -797,21 +381,26 @@ ui <- page_navbar(
   id       = "main_nav",
   fillable = FALSE,
 
-  # Link the external stylesheet
   header = tags$head(
     tags$link(rel = "stylesheet", type = "text/css", href = "styles.css"),
-    tags$link(rel = "icon", type = "image/png", href = "favicon.png")
+    tags$link(rel = "icon", type = "image/png", href = "favicon.png"),
+    tags$script(HTML(
+      "Shiny.addCustomMessageHandler('scroll_to', function(id) {
+         setTimeout(function() { var el = document.getElementById(id);
+           if (el) el.scrollIntoView({behavior: 'smooth'}); }, 150);
+       });"))
   ),
 
   # ---- Gene selector (top-right of navbar) -----------------------------------
+  # One entry per folder in Input_Files/genes/, after Tools/build_app_cache.R.
   nav_item(
     tags$div(
       style = "padding: 6px 10px;",
       selectInput(
         "selected_gene",
         label    = NULL,
-        choices  = c("COI" = "COI"),   # add more genes here later
-        selected = "COI",
+        choices  = names(genes),
+        selected = names(genes)[1],
         width    = "120px"
       )
     )
@@ -893,7 +482,6 @@ ui <- page_navbar(
         uiOutput("no_data_warning")
       ),
 
-      # Map fills available height; spinner while loading
       card(
         full_screen = TRUE,
         class       = "map-card",
@@ -912,35 +500,24 @@ ui <- page_navbar(
     layout_columns(
       col_widths = c(3, 9),
 
-      # Left: info card (update description as needed)
       card(
         card_header(tags$span(icon("circle-info"), " About this Tree")),
         class = "controls-card",
         tags$p(class = "help-text",
                "Maximum likelihood phylogenetic tree of", tags$em("Anopheles stephensi"),
-               "COI haplotypes inferred with RAxML. Tree is hosted and visualised
+               "haplotypes inferred with RAxML. Tree is hosted and visualised
               interactively via iTOL. Use the iTOL toolbar to zoom, collapse clades,
               and export the figure.")
       ),
 
-      # Right: iTOL interactive viewer
       card(
         full_screen = TRUE,
-        card_header(
-          "iTOL — COI Maximum Likelihood Tree",
-          tags$a(
-            href     = "tree.svg",
-            download = "anopheles_stephensi_tree.svg",
-            class    = "btn btn-sm btn-outline-primary float-end",
-            icon("download"), " Download SVG"
-          )
-        ),
-        tags$img(src = "tree.svg", width = "100%", style = "height:700px; object-fit:contain;")
+        uiOutput("tree_view")
       )
     )
   ),
 
-  # ---- Tab 3: Gene Flow Network -----------------------------------------------
+  # ---- Tab 3: Gene Network ----------------------------------------------------
   nav_panel(
     title = tags$span(icon("circle-nodes"), "Gene Network"),
     value = "network_tab",
@@ -948,19 +525,20 @@ ui <- page_navbar(
     layout_columns(
       col_widths = c(3, 9),
 
-      # Left: controls
       card(
         hr(class = "sidebar-divider"),
         tags$p(class = "help-text",
                style = "padding: 72px; font-size: 16px; margin: 8px 0;",
                icon("circle-info"),
-               " Node size reflects haplotype frequency. Edge direction reflects inferred character state changes.")
+               " Node size shows betweenness centrality: how often a country lies on the shortest path between other countries.",
+               " Each arrow means a lineage sampled in one country has its closest inferred ancestor in another, based on the COI tree.",
+               " Edge width counts how many such changes were inferred.",
+               " Arrows are possible dispersal pathways from a single gene, not measured mosquito movement.")
       ),
 
-      # Right: network
       card(
         full_screen = TRUE,
-        card_header("Strainhub: Haplotype Gene Flow Network"),
+        card_header("StrainHub: Phylogeographic Dispersal Network"),
         withSpinner(
           visNetworkOutput("haplo_network", height = "700px"),
           color = "#1a4f72"
@@ -971,19 +549,18 @@ ui <- page_navbar(
     layout_columns(
       col_widths = c(3, 9),
 
-      # Left: controls for country connectivity
       card(
         hr(class = "sidebar-divider"),
         tags$p(class = "help-text",
                style = "padding: 72px; font-size: 16px; margin: 8px 0;",
                icon("circle-info"),
-               " Node size reflects number of included samples (capped at 20 per country/year). Edge thickness reflects the number of shared unique haplotypes between countries.")
+               " Node size reflects number of included samples (capped at 20 per country/year). Edge thickness reflects the number of shared unique haplotypes between countries.",
+               " Countries with more samples have more chances to detect shared haplotypes, so thin sampling can hide links.")
       ),
 
-      # Right: country connectivity network
       card(
         full_screen = TRUE,
-        card_header("An. stephensi: Country Connectivity"),
+        card_header("An. stephensi: Country Haplotype-Sharing Network"),
         withSpinner(
           visNetworkOutput("country_network", height = "700px"),
           color = "#1a4f72"
@@ -1006,6 +583,7 @@ ui <- page_navbar(
 
     nav_panel(
       "About this Tool",
+      value = "about_tab",
       card(
         class = "about-card",
         card_body(
@@ -1018,8 +596,38 @@ ui <- page_navbar(
           tags$p(
             "Scripts available here: ", tags$a(href= "https://github.com/sayalg/VIA", "https://github.com/sayalg/VIA")
           ),
+          if (!is.null(ddrad) && nrow(ddrad)) tagList(
+            tags$h5(id = "genomic-data", "Genome-wide data (ddRAD-seq)"),
+            tags$p(paste0(
+              "At ", nrow(ddrad), " collection sites in ",
+              paste(sort(unique(ddrad$country)), collapse = ", "),
+              ", the map pop-up also shows genome-wide statistics from double-digest ",
+              "restriction-site-associated DNA sequencing (ddRAD-seq). They come from the ",
+              "published studies below, not from the COI data, and don't change with the ",
+              "year filter."
+            )),
+            tags$ul(
+              tags$li(tags$b("Samples:"), " individuals genotyped at the site."),
+              tags$li(tags$b("π (nucleotide diversity):"),
+                      " the average genetic difference between two individuals from the site.
+                      Higher values mean more genetic diversity."),
+              tags$li(tags$b("S (segregating sites):"),
+                      " the number of polymorphic positions found. S rises with sample size,
+                      so compare sites with similar numbers of samples."),
+              tags$li(tags$b("Tajima's D:"),
+                      " compares π with S. Values near 0 fit a population of stable size;
+                      positive values can reflect a recent bottleneck or population structure,
+                      and negative values a recent expansion.")
+            ),
+            tags$p("Sources:"),
+            tags$ul(lapply(unique(ddrad$source), function(s) {
+              doi <- ddrad$doi[match(s, ddrad$source)]
+              if (is.na(doi)) return(tags$li(s))
+              tags$li(sub(doi, "", s, fixed = TRUE),
+                      tags$a(href = doi, target = "_blank", rel = "noopener", doi))
+            }))
+          ),
           tags$h5("Contact"),
-          # TODO: update with your actual contact info
           tags$p("For questions or data requests, contact: ",
                  tags$a(href = "mailto:Tamar_Carter@baylor.edu", "Tamar_Carter@baylor.edu")),
           tags$h5("Citation"),
@@ -1039,45 +647,30 @@ ui <- page_navbar(
 
 server <- function(input, output, session) {
 
-  # ---- Update slider range from actual data ----
-  available_years <- df_haplo %>%
-    filter(!is.na(Year)) %>%
-    pull(Year) %>%
-    unique() %>%
-    sort()
+  gene <- reactive(genes[[req(input$selected_gene)]])
 
-  updateSliderInput(session, "year_filter",
-                    min   = min(available_years),
-                    max   = max(available_years),
-                    value = max(available_years)
-  )
-  updateSliderInput(session, "year_range",
-                    min   = min(available_years),
-                    max   = max(available_years),
-                    value = c(min(available_years), max(available_years))
-  )
+  # Year sliders follow the selected gene's data.
+  observeEvent(gene(), {
+    yrs <- gene()$years
+    updateSliderInput(session, "year_filter", min = min(yrs), max = max(yrs), value = max(yrs))
+    updateSliderInput(session, "year_range",  min = min(yrs), max = max(yrs), value = range(yrs))
+  })
 
   # Track selected location for shipping route highlighting
   selected_location <- reactiveVal(NULL)
-
-  # Create city-to-country mapping
-  city_to_country <- df_haplo %>%
-    filter(!is.na(City.Town), !is.na(Country)) %>%
-    select(City.Town, Country) %>%
-    distinct() %>%
-    deframe()
 
   # ==============================================================================
   # TAB 1 — MAP
   # ==============================================================================
 
   filtered_data <- reactive({
+    d <- gene()$haplo
     switch(input$time_mode,
-           "exact"      = df_haplo %>% filter(Year == input$year_filter),
-           "cumulative" = df_haplo %>% filter(Year <= input$year_filter),
-           "range"      = df_haplo %>% filter(Year >= input$year_range[1],
-                                              Year <= input$year_range[2]),
-           "all"        = df_haplo
+           "exact"      = d %>% filter(Year == input$year_filter),
+           "cumulative" = d %>% filter(Year <= input$year_filter),
+           "range"      = d %>% filter(Year >= input$year_range[1],
+                                       Year <= input$year_range[2]),
+           "all"        = d
     )
   })
 
@@ -1109,219 +702,171 @@ server <- function(input, output, session) {
     }
   })
 
-  # Base map with static haplotype legend — renders once.
-  #
-  # NOTE: the Railways layer is deliberately NOT added here. It starts hidden
-  # (hideGroup in create_base_map), and adding it at render time meant every
-  # visitor downloaded the full railway geometry before they could see anything,
-  # whether or not they ever switched the layer on. It is now drawn on demand by
-  # the observer below.
+  # The map itself renders once per session; everything gene- or filter-dependent
+  # is pushed through leafletProxy so the map keeps its zoom and layers.
   output$map <- renderLeaflet({
-    create_base_map() %>%
-      add_country_status_layer(
-        data        = invasive_status,
-        country_col = "COUNTRY_NAME",
-        status_col  = "INVASIVE_STATUS"
-      ) %>%
+    create_base_map() %>% add_country_status_layer()
+  })
+
+  observeEvent(gene(), {
+    pal <- gene()$palette
+    leafletProxy("map") %>%
       addLegend(
         position = "bottomleft",
-        colors   = haplotype_palette,
-        labels   = names(haplotype_palette),
-        title    = "Haplotypes",
+        colors   = unname(pal),
+        labels   = names(pal),
+        title    = gene()$marker_label,   # "Haplotypes", "P47Rec Genotype", ...
         opacity  = 1,
         layerId  = "haplotype_legend"
       )
   })
 
-  # ---- Lazy heavy layers ------------------------------------------------------
-  # input$map_groups holds the overlay groups the user currently has ticked.
-  # Both heavy layers are hidden by default, so gating on this means a first page
-  # load ships none of their geometry.
-  #
-  # Once geometry has been sent it is never cleared on untick — Leaflet hides the
-  # group client-side, so switching a layer back on is instant and costs nothing.
-  # Geometry is only re-sent when the data it represents actually changes.
-  railways_drawn      <- reactiveVal(FALSE)
-  shipping_drawn_ids  <- reactiveVal(NULL)
+  # ---- Overlays ---------------------------------------------------------------
+  # input$map_groups holds the overlay groups currently ticked. Geometry is never
+  # cleared on untick — Leaflet hides the group client-side — so switching a
+  # layer back on is instant and re-sends nothing.
+  railways_drawn     <- reactiveVal(FALSE)
+  shipping_drawn_ids <- reactiveVal(NULL)
 
-  layer_on <- function(name) {
-    isTRUE(name %in% input$map_groups)
-  }
+  layer_on <- function(name) isTRUE(name %in% input$map_groups)
 
   observeEvent(input$map_groups, {
     if (layer_on("Railways") && !railways_drawn()) {
       leafletProxy("map") %>% add_railway_layer()
-      railways_drawn(TRUE)   # geometry is static; draw it at most once per session
+      railways_drawn(TRUE)   # static geometry: at most once per session
     }
   }, ignoreNULL = TRUE)
 
-  # Update pie charts on filter change only
+  # Pie charts follow the gene and the temporal filter.
   observe({
-    req(filtered_data())
     fd    <- filtered_data()
-    proxy <- leafletProxy("map") %>% clearMinicharts()
+    proxy <- leafletProxy("map") %>% clearMinicharts() %>% clearMarkers()
     if (nrow(fd) > 0) {
-      proxy <- add_pie_markers(
-        map           = proxy,
-        data          = fd,
-        lat_col       = "Latitude",
-        lon_col       = "Longitude",
-        category_col  = "Haplotype",
-        city_col      = "City.Town",
-        state_col     = "County.State",
-        country_col   = "Country",
-        radius        = 30,
-        add_legend    = FALSE,
-        color_palette = haplotype_palette
-      )
+      add_pie_markers(proxy, fd, color_palette = gene()$palette, radius = 30)
     }
-    add_chart_interactions(proxy)
   })
 
   # Handle pie chart clicks via invisible markers
   observeEvent(input$map_marker_click, {
-    click <- input$map_marker_click
-    if (is.null(click) || is.null(click$id)) {
-      selected_location(NULL)
-    } else {
-      clicked_city <- click$id
-      # Convert city name to country
-      country <- city_to_country[clicked_city]
-      if (!is.na(country)) {
-        selected_location(country)
-      }
-    }
+    id <- input$map_marker_click$id
+    if (is.null(id)) return(selected_location(NULL))
+    country <- gene()$city_to_country[id]
+    if (!is.na(country)) selected_location(unname(country))
+  })
+
+  # The (i) in a pop-up's ddRAD block opens the About page's explanation.
+  observeEvent(input$show_genomic_about, {
+    nav_select("main_nav", "about_tab")
+    session$sendCustomMessage("scroll_to", "genomic-data")
   })
 
   # Reset on empty map click
   observeEvent(input$map_click, {
-    if (is.null(input$map_click$id)) {
-      selected_location(NULL)
-    }
+    if (is.null(input$map_click$id)) selected_location(NULL)
   }, ignoreInit = TRUE)
 
-  # Routes matching the current temporal filter. Geometry is stored once per
-  # from-to pair and selected through the year index, rather than rbind-ing a
-  # separate full copy of every year's geometry together.
-  filtered_shipping_sf <- reactive({
-    if (is.null(shipping_routes) || length(shipping_years) == 0) return(NULL)
-
-    target_years <- switch(input$time_mode,
-                           "exact"      = shipping_years[shipping_years == input$year_filter],
-                           "cumulative" = shipping_years[shipping_years <= input$year_filter],
-                           "range"      = shipping_years[shipping_years >= input$year_range[1] &
-                                                           shipping_years <= input$year_range[2]],
-                           "all"        = shipping_years
-    )
-    if (length(target_years) == 0) return(NULL)
-
-    active <- unique(shipping_index$route_id[shipping_index$year %in% target_years])
-    if (length(active) == 0) return(NULL)
-
-    shipping_routes[shipping_routes$route_id %in% active, ]
+  # Routes active under the current temporal filter.
+  active_route_ids <- reactive({
+    yrs <- shipping$years
+    target <- switch(input$time_mode,
+                     "exact"      = yrs[yrs == input$year_filter],
+                     "cumulative" = yrs[yrs <= input$year_filter],
+                     "range"      = yrs[yrs >= input$year_range[1] & yrs <= input$year_range[2]],
+                     "all"        = yrs)
+    sort(unique(shipping$route_years$route_id[shipping$route_years$year %in% target]))
   })
 
-  # Redraw base routes when the filter changes — but only while the user actually
-  # has the layer switched on, and only when the filter genuinely changes which
-  # routes are selected.
-  #
-  # That second condition matters more than it looks. Most years share almost the
-  # same route set: in cumulative mode, 17 of the 19 year steps select an
-  # identical set. Without this check, dragging the year slider (or letting the
-  # animation run) re-sent all 1,774 polylines on every tick for no visible
-  # change.
+  # Redraw only while the layer is on, and only when the selected routes actually
+  # change: in cumulative mode 17 of the 19 year steps select an identical set.
   observe({
-    on     <- layer_on("Shipping Routes")
-    routes <- filtered_shipping_sf()   # take the dependency even while hidden, so
-                                       # switching the layer on picks up any
-                                       # filter change made in the meantime
-
-    if (!on) return()                  # hidden: leave whatever is drawn in place
-
-    ids <- if (is.null(routes) || nrow(routes) == 0) {
-      character(0)
-    } else {
-      sort(routes$route_id)
-    }
-    if (identical(ids, shipping_drawn_ids())) return()   # nothing to redraw
+    on  <- layer_on("Shipping Routes")
+    ids <- active_route_ids()   # dependency taken even while hidden
+    if (!on || identical(ids, shipping_drawn_ids())) return()
     shipping_drawn_ids(ids)
 
-    map <- leafletProxy("map") %>%
-      clearGroup("Shipping Routes") %>%
-      clearGroup("Shipping Highlight")
-
-    if (length(ids) == 0) return()
-
-    map %>%
-      addMapPane("shipping", zIndex = 250) %>%
-      addPolylines(
-        data    = routes,
-        color   = "#0077b6",
-        weight  = 1,
-        opacity = 0.4,
-        group   = "Shipping Routes",
-        options = pathOptions(pane = "shipping")
-      )
+    proxy <- leafletProxy("map") %>% clearGroup("Shipping Routes")
+    if (length(ids)) {
+      proxy %>% addGeoJSON(ship_geojson(ids), group = "Shipping Routes",
+                           color = "#0077b6", weight = 1, opacity = 0.4, fill = FALSE,
+                           options = pathOptions(pane = "shipping"))
+    }
   })
 
-  # Update highlight layer only when selection changes
+  # Highlight routes touching the selected country; added after the base routes
+  # so it draws on top of them.
   observe({
-    leafletProxy("map") %>% clearGroup("Shipping Highlight")
-
-    if (!layer_on("Shipping Routes")) return()
-
-    routes   <- filtered_shipping_sf()
-    location <- selected_location()
-    if (is.null(routes) || is.null(location) || location == "") return()
-    highlighted <- routes[routes$from == location | routes$to == location, ]
-    if (nrow(highlighted) == 0) return()
-    # Added after the base routes, so it draws on top of them within the shared
-    # shipping-pane canvas.
-    leafletProxy("map") %>%
-      addPolylines(
-        data    = highlighted,
-        color   = "#d62728",
-        weight  = 2.5,
-        opacity = 0.85,
-        group   = "Shipping Highlight",
-        options = pathOptions(pane = "shipping")
-      )
+    proxy <- leafletProxy("map") %>% clearGroup("Shipping Highlight")
+    loc <- selected_location()
+    if (!layer_on("Shipping Routes") || is.null(loc)) return()
+    r   <- shipping$routes
+    ids <- intersect(active_route_ids(), r$route_id[r$from == loc | r$to == loc])
+    if (length(ids)) {
+      proxy %>% addGeoJSON(ship_geojson(ids), group = "Shipping Highlight",
+                           color = "#d62728", weight = 2.5, opacity = 0.85, fill = FALSE,
+                           options = pathOptions(pane = "shipping"))
+    }
   })
 
   # ==============================================================================
   # TAB 2 — PHYLOGENETIC TREE
   # ==============================================================================
 
-    # Tree rendered from iTOL in utility section
+  output$tree_view <- renderUI({
+    name <- input$selected_gene
+    svg  <- gene()$tree_svg
+    if (is.null(svg)) {
+      return(tagList(
+        card_header(paste(name, "Maximum Likelihood Tree")),
+        tags$p(class = "help-text", style = "padding: 24px;",
+               "No tree figure for ", name, " yet. Put its iTOL export at ",
+               tags$code(paste0("Input_Files/genes/", name, "/tree.svg")),
+               " and rerun ", tags$code("Rscript Tools/build_app_cache.R"), ".")
+      ))
+    }
+    tagList(
+      card_header(
+        paste0("iTOL — ", name, " Maximum Likelihood Tree"),
+        tags$a(
+          href     = svg,
+          download = paste0("anopheles_stephensi_", name, "_tree.svg"),
+          class    = "btn btn-sm btn-outline-primary float-end",
+          icon("download"), " Download SVG"
+        )
+      ),
+      tags$img(src = svg, width = "100%", style = "height:700px; object-fit:contain;")
+    )
+  })
 
   # ==============================================================================
-  # TAB 3, PANEL 1 — STRAINHUB NETWORK
+  # TAB 3 — NETWORKS (both precomputed by Tools/build_app_cache.R)
   # ==============================================================================
 
   output$haplo_network <- renderVisNetwork({
-    net <- build_haplo_network_data()
-    validate(need(!is.null(net), "Transmission network could not be built."))
+    net <- gene()$strainhub
+    validate(need(net, paste0("No StrainHub network for ", input$selected_gene,
+                              ": add tree.newick to its folder in Input_Files/genes/ and rebuild.")))
 
     visNetwork(net$nodes, net$edges,
-               main = "Strainhub: Country Transmission") %>%
+               main = "Phylogeographic dispersal network (COI)") %>%
       visNodes(shape = "ellipse") %>%
       visLayout(randomSeed = 12) %>%
       visOptions(highlightNearest = TRUE, nodesIdSelection = list(enabled = TRUE)) %>%
       visPhysics(solver = "repulsion", repulsion = list(nodeDistance = 200))
   })
 
-  # ==============================================================================
-  # TAB 3, PANEL 2 — HAPLOTYPE NETWORK
-  # ==============================================================================
-
   output$country_network <- renderVisNetwork({
-    net <- build_country_network_data()
-    validate(need(!is.null(net), "Country connectivity network could not be built."))
+    net <- gene()$country_net
+    w <- visNetwork(net$nodes, net$links, main = "Country haplotype-sharing network (COI)")
 
-    visNetwork(net$nodes, net$links,
-               main = "An. stephensi: Country Connectivity") %>%
+    # Node x/y were computed by visIgraphLayout() at build time. These are the
+    # remaining settings visIgraphLayout() applies: the igraphlayout flag makes
+    # vis.js rescale the normalised coordinates, and node physics stays off so
+    # the layout holds. Keeps igraph off the server.
+    w$x$igraphlayout <- list(type = "square")
+
+    w %>%
+      visNodes(physics = FALSE) %>%
       visLayout(randomSeed = 1) %>%
-      visIgraphLayout(layout = "layout_nicely") %>%
       visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE) %>%
       visEdges(color = "rgba(100, 100, 100, 0.4)", smooth = TRUE) %>%
       visGroups(groupname = "Afghanistan",          color = "#CD9B1D") %>%
@@ -1338,7 +883,8 @@ server <- function(input, output, session) {
       visGroups(groupname = "Sudan",                color = "#1874CD") %>%
       visGroups(groupname = "United Arab Emirates", color = "#FF7F00") %>%
       visGroups(groupname = "Yemen",                color = "#4169E1") %>%
-      visPhysics(solver = "repulsion", repulsion = list(nodeDistance = 300))
+      visPhysics(solver = "repulsion", repulsion = list(nodeDistance = 300),
+                 stabilization = FALSE)
   })
 
   # ==============================================================================
@@ -1346,11 +892,6 @@ server <- function(input, output, session) {
   # ==============================================================================
 
   pubBrowserServer("pubs")
-
 }
-
-# ================================================================================
-# RUN
-# ================================================================================
 
 shinyApp(ui = ui, server = server)

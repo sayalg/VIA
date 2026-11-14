@@ -1,281 +1,169 @@
 # VIA: Vector Invasion Atlas
 
-## Overview
-
-This is an interactive R Shiny web application that displays haplotype distribution data on a world map using pie chart markers, phylogenetic tree inferences, transmission networks, and central hub for *An. stephensi* related literature.
+An interactive R Shiny dashboard showing *Anopheles stephensi* haplotype distribution on a map (pie chart per collection site), phylogenetic trees, phylogeographic dispersal and haplotype-sharing networks, and a live hub of *An. stephensi* literature.
 
 ---
 
-## Required R Packages
+## Updating the data, or adding a gene
 
-Install all dependencies before running the app. Copy and paste the following into your R console:
-
-```r
-install.packages(c(
-  "shiny", "bslib", "shinycssloaders",
-  "leaflet", "leaflet.minicharts",
-  "tidyverse", "tidygeocoder",
-  "htmlwidgets", "htmltools",
-  "sf", "rnaturalearth", "rnaturalearthdata",
-  "readxl", "visNetwork", "ape", "tidytree",
-  "httr", "xml2", "stringr",
-  # required by the vendored make_transnet() — see Dashboard/strainhub_transnet.R
-  "igraph", "castor", "hash", "plyr", "tibble", "magrittr"
-))
-```
-
-**Everything comes from CRAN.** There is no Bioconductor package and no GitHub-only
-package in the app, which is what makes it deploy cleanly. `DT`, `ggplot2`, `plotly`
-and `treeio` used to be attached in `app.R` but were never called; they have been
-removed, which is what dropped the last Bioconductor dependency (`treeio`). Re-add
-them in both places if you later add a datatable, a ggplot, or a plotly chart.
-
-> **Note on `strainhub`.** The app does not depend on the `strainhub` package, and
-> you should not try to install it. Its `DESCRIPTION` (v2.0.0) declares no `Imports:`
-> or `Depends:` field while its `NAMESPACE` imports 27 packages, so `R CMD INSTALL`
-> aborts with **`lazy loading failed for package 'strainhub'`** — and two of those
-> imports cannot be satisfied from CRAN at all (`rbokeh` is archived, `treeio` is
-> Bioconductor-only). The one function this dashboard uses, `make_transnet()`, is
-> instead vendored into [`Dashboard/strainhub_transnet.R`](Dashboard/strainhub_transnet.R)
-> under StrainHub's Apache-2.0 licence, with the upstream source, citation, and a
-> full list of deviations recorded in the file header.
-
----
-
-## Directory Structure
-
-Everything `Dashboard/app.R` reads at runtime lives inside `Dashboard/`, so the app
-directory is self-contained and can be published as-is:
-
-```
-VIA/
-├── Dashboard/                  ← this whole folder is what gets deployed
-│   ├── app.R
-│   ├── pubmed_module.R
-│   ├── strainhub_transnet.R    ← vendored make_transnet() (Apache 2.0)
-│   ├── .rscignore
-│   ├── data/
-│   │   ├── FinalCOI_metadata.csv
-│   │   ├── FinalCOI_metadata_w_coor.csv
-│   │   ├── MTM_INVASIVE_VECTOR_SPECIES_20251205.xlsx
-│   │   ├── COI_subsampled20_per_country_year.aligned.raxml.bestTree
-│   │   ├── africa_railways.rds        ← generated cache
-│   │   ├── shipping_routes.rds        ← generated cache
-│   │   ├── networks.rds               ← generated cache
-│   │   └── pubmed_snapshot.rds        ← generated cache
-│   └── www/
-│       ├── logo.png
-│       ├── favicon.png
-│       ├── styles.css
-│       └── tree.svg
-├── Tools/
-│   └── build_app_cache.R       ← builds the four caches above
-├── Input_Files/                ← raw analysis inputs + raw layer extracts
-├── RAXML/                      ← phylogenetics outputs; not deployed
-├── Railway_Extraction/         ← offline prep → Input_Files/*_raw.rds
-├── Shipping_Extraction/        ← offline prep → Input_Files/*_raw.rds
-└── Scripts/                    ← upstream alignment / variant-calling pipeline
-```
-
-A Shiny deployment bundle contains **only the app directory**, so `app.R` must never
-reference anything with `../`. If you add a new data file, put it in `Dashboard/data/`
-and add a path constant at the top of `app.R`.
-
-### Data pipeline
-
-```
-Railway_Extraction/prepare_africa_railways.R  ─┐
-Shipping_Extraction/prepare_shipping_routes.R ─┤→ Input_Files/*_raw.rds
-                                               │
-                        Tools/build_app_cache.R ┴→ Dashboard/data/*.rds → deployed
-```
-
-The two `prepare_*.R` scripts are slow and network-bound (Geofabrik downloads, a
-40 MB UNCTAD table, Python `searoute`); run them only when the source data
-changes. `Tools/build_app_cache.R` is fast and should be re-run before every
-deploy:
+Everything the dashboard shows is rebuilt by **one command**, run from the repository root:
 
 ```bash
 Rscript Tools/build_app_cache.R
 ```
 
+It takes about 20 seconds. Afterwards `Dashboard/` is ready to run or deploy.
+
+### Add new samples to an existing gene
+
+1. Add rows to `Input_Files/genes/<GENE>/metadata.csv`.
+   Leave `Latitude`/`Longitude` blank if you don't have them — the build looks them up from `City.Town`, `County.State` and `Country` via OpenStreetMap.
+2. If the tree changed, replace `tree.newick` (and `tree.svg`, re-exported from iTOL) in the same folder.
+3. Run the build.
+
+### Add a new gene
+
+1. Export the gene's sample sheet from Excel as CSV, saved as `metadata.csv`. Use the same columns as the other genes' sheets, plus the gene's own result column named **`<Gene> Genotype`** (or `<Gene> Haplotype`) — e.g. `P47Rec Genotype`.
+2. Put it in a folder named after the gene: `Input_Files/genes/P47rec/metadata.csv`. **The folder name must match the start of that column** (capitals don't matter), because that's how the build knows which column to colour the map by. A `COI Haplotype` column, or any other extra column, is carried along and doesn't interfere.
+3. Optionally add, in the same folder:
+
+   | File | What it drives |
+   |---|---|
+   | `tree.newick` | StrainHub phylogeographic dispersal network (RAxML best tree; tip labels must match `FASTA ID`) |
+   | `tree.svg` | Phylogenetic Tree tab (export it from iTOL) |
+
+   Without them, those two panels show a note saying what's missing.
+4. Run the build. The gene appears in the dashboard's gene dropdown, named after its folder, with the map legend titled after its column.
+
+The sheet needs at least `Year`, `Country`, `Latitude`, `Longitude`, `City/Town`, `County/State` and the genotype column, plus `FASTA ID` if you add a tree. Excel-style headers (`City/Town`, `FASTA ID`) and R-style headers (`City.Town`, `FASTA.ID`) both work.
+
+### What the build does for you
+
+- **Missing coordinates** — first copied from any other gene's sheet that has the same `Sample ID` (so a sample sits in the same place under every gene), then looked up once per distinct address on OpenStreetMap and saved to `Input_Files/geocode_cache.csv`. Commit that file; reruns then make no network calls.
+- **The same sample listed twice** (same Sample ID, genotype, country, town and year) — counted once, keeping the more complete row.
+- **Misaligned FASTA IDs** — FASTA IDs end in their country (`Kassala8_Sudan`); if that disagrees with the row's Country, the build warns that the column has slipped, and refuses to build a StrainHub network from it.
+- **Missing columns, an ambiguous genotype column, or other duplicates** — stops or warns, naming the gene and what to fix.
+- **Samples it can't place** — warns and lists the addresses, so you can fix the spelling or type the coordinates in.
+- Rows located at `Laboratory` are kept for the networks but left off the map.
+
+### Not covered by the build
+
+These produce the build's inputs, need their own tools, and only need rerunning when their sources change:
+
+- **Alignment and variant calling** — `Scripts/*.sh` (MAFFT etc.).
+- **RAxML** to produce `tree.newick`, and **iTOL** to draw `tree.svg`.
+- **Railway and shipping extracts** — `Railway_Extraction/` and `Shipping_Extraction/` produce `Input_Files/*_raw.rds` (slow: Geofabrik downloads, the 40 MB UNCTAD table, Python `searoute`).
+
 ---
 
-## Required Input Files
+## Required R Packages
 
-All paths are relative to `Dashboard/`. See [`Dashboard/data/README.md`](Dashboard/data/README.md)
-for provenance details.
-
-| File | Required? | Description |
-|---|---|---|
-| `data/FinalCOI_metadata.csv` | Yes | Primary sample metadata including coordinates, haplotype assignments, and collection location fields (`City.Town`, `County.State`, `Country`). Must have a `Year` column for the time filter to work. |
-| `data/FinalCOI_metadata_w_coor.csv` | Yes | A version of the above with coordinates pre-filled for all rows (generated by the `fill_missing_coords()` function — see note below). This is the file actually used to render the map and both networks. |
-| `data/MTM_INVASIVE_VECTOR_SPECIES_20251205.xlsx` | Yes | Excel file with a sheet named `Data` containing country-level native/invasive status. Must include columns `COUNTRY_NAME` and `INVASIVE_STATUS`. |
-| `data/COI_subsampled20_per_country_year.aligned.raxml.bestTree` | Yes | RAxML best-scoring tree. Only used if `networks.rds` is missing. |
-| `data/africa_railways.rds` | No | Railway overlay, generated. Missing → the Railways layer is hidden and a startup warning is emitted. |
-| `data/shipping_routes.rds` | No | Shipping overlay, generated. Missing → the Shipping Routes layer is disabled. |
-| `data/networks.rds` | No | Both network panels, generated. Missing → they are computed at runtime instead (slower, and pulls in castor/hash/plyr/igraph). |
-| `data/pubmed_snapshot.rds` | No | Literature tab seed, generated. Missing → the first visitor waits 20–40 s for the live PubMed fetch. |
-
-`app.R` checks the four required files at startup and stops with an explicit
-message naming any that are missing, rather than failing later mid-render.
-
----
-
-## A Note on Geocoding
-
-The script contains a function called `fill_missing_coords()` that uses the OpenStreetMap API to look up coordinates for any samples missing latitude/longitude values. **This function is intentionally not called on app startup** because it makes one API call per missing row and can be very slow on large datasets.
-
-The pre-geocoded file (`FinalCOI_metadata_w_coor.csv`) is what the app actually loads. If you add new samples that are missing coordinates, you will need to re-run this function **once, offline**, and save the result:
+To **run** the dashboard:
 
 ```r
-df_geo <- fill_missing_coords(samples_df)
-write.csv(df_geo, "data/FinalCOI_metadata_w_coor.csv", row.names = FALSE)
+install.packages(c(
+  "shiny", "bslib", "shinycssloaders", "leaflet", "leaflet.minicharts",
+  "dplyr", "tidyr", "sf", "visNetwork", "stringr", "httr", "xml2"
+))
 ```
+
+To **rebuild the data** you also need the following; the build script checks for them and prints the exact `install.packages()` line for anything missing:
+
+```r
+install.packages(c(
+  "readxl", "readr", "rnaturalearth", "rnaturalearthdata", "jsonlite", "tidygeocoder",
+  "igraph", "ape", "tidytree", "castor", "hash", "plyr", "tibble", "magrittr"
+))
+```
+
+Everything is on CRAN. Do **not** install the `strainhub` package: its `DESCRIPTION` declares none of its 27 imports, so it fails with `lazy loading failed for package 'strainhub'`. The one function used, `make_transnet()`, is vendored in [`Tools/strainhub_transnet.R`](Tools/strainhub_transnet.R) (Apache 2.0, with citation and deviations in its header).
+
+---
+
+## Directory Structure
+
+```
+VIA/
+├── Input_Files/               ← everything you edit (build inputs)
+│   ├── genes/                 ← one folder per gene = one entry in the dropdown
+│   │   └── COI/
+│   │       ├── metadata.csv
+│   │       ├── tree.newick
+│   │       └── tree.svg
+│   ├── MTM_INVASIVE_VECTOR_SPECIES_*.xlsx   ← newest one is used
+│   ├── geocode_cache.csv      ← created by the build when it geocodes
+│   ├── africa_railways_raw.rds
+│   └── shipping_routes_raw.rds
+├── Tools/
+│   ├── build_app_cache.R      ← the one command
+│   └── strainhub_transnet.R
+├── Dashboard/                 ← this folder is what gets deployed
+│   ├── app.R
+│   ├── pubmed_module.R
+│   ├── data/                  ← generated by the build; don't edit
+│   └── www/                   ← logo, styles; www/genes/ is generated
+├── Railway_Extraction/, Shipping_Extraction/, Scripts/, RAXML/   ← upstream steps
+```
+
+`Dashboard/` never reads anything outside itself, which is what lets it be deployed on its own.
 
 ---
 
 ## How to Run
 
-1. Confirm all packages above are installed.
-2. Open `Dashboard/app.R` in RStudio.
-3. Click the **"Run App"** button in the top-right corner of the editor pane.
-
-RStudio sets the working directory to the app folder automatically. From a plain R
-console, run it explicitly:
-
 ```r
 shiny::runApp("Dashboard")
 ```
 
-The app will open in your browser (or RStudio's built-in viewer). The first load
-takes a few seconds while it reads the input files, and the Literature tab needs
-20–40 s to fetch from PubMed on the first session (the result is then cached
-process-wide for 6 hours).
+Or open `Dashboard/app.R` in RStudio and click **Run App**.
 
 ---
 
 ## Publishing to Shiny Server / shinyapps.io / Posit Connect
 
-Deploy the **`Dashboard` directory only**:
+1. Run the build (above).
+2. Deploy the **`Dashboard` directory only**:
 
-```r
-rsconnect::deployApp("Dashboard", appName = "vector-invasion-atlas")
-```
+   ```r
+   rsconnect::deployApp("Dashboard", appName = "vector-invasion-atlas")
+   ```
 
-For a self-hosted Shiny Server, copy `Dashboard/` into the server's app root
-(e.g. `/srv/shiny-server/vector-invasion-atlas/`) with its `data/` and `www/`
-subdirectories intact.
+   For a self-hosted Shiny Server, copy `Dashboard/` into the app root (e.g. `/srv/shiny-server/vector-invasion-atlas/`) with `data/` and `www/` intact. `sf` needs the GDAL/GEOS/PROJ system libraries on that server.
 
-Before every deploy:
-
-- **Run `Rscript Tools/build_app_cache.R`.** The app reads generated caches; a stale
-  cache means stale literature and stale networks.
-- Do **not** install `strainhub`. If it is present in your library, `rsconnect` may try
-  to add it to the manifest and the server-side build will fail with
-  `lazy loading failed for package 'strainhub'`. The app no longer references it.
-- Make sure the server has outbound internet access. The app calls PubMed at
-  runtime and loads Mapbox / Esri basemap tiles in the browser.
-- Optionally set `CARTO_API_KEY` — see **Basemap tiles** below.
-- `.rscignore` in `Dashboard/` keeps session cruft out of the bundle.
+The server needs outbound internet for PubMed and map tiles.
 
 ### Basemap tiles
 
-The light **Base** layer used to be CartoDB Positron via
-`providers$CartoDB.Positron`. CARTO now requires an API key for their raster
-tiles at `basemaps.cartocdn.com`, and serve tiles stamped *"requires an API
-key"* without one — which showed up as soon as you zoomed past the levels their
-CDN still had cached.
-
-The app now works either way:
+CARTO now requires an API key for their raster basemap tiles, and serves tiles stamped *"requires an API key"* without one. The app works either way:
 
 | `CARTO_API_KEY` | Base layer | Zoom |
 |---|---|---|
-| unset (default) | Esri Light Gray Canvas — no key, no account | native to 16, upscaled to 19 |
-| set | CartoDB Positron, exactly as before | native to 20 |
+| unset (default) | Esri Light Gray Canvas — no key needed | native to 16, upscaled to 19 |
+| set | CartoDB Positron | native to 20 |
 
-A CARTO key is free (fair use: 5 million tile requests/month) and needs no CARTO
-account — request one at <https://carto.com/basemaps/apikey>, then either edit
-`CARTO_API_KEY` at the top of `app.R` or pass it as an environment variable:
+A key is free at <https://carto.com/basemaps/apikey>. Set it at the top of `app.R`, or pass it at deploy time: `rsconnect::deployApp("Dashboard", envVars = "CARTO_API_KEY")`.
 
-```r
-rsconnect::deployApp("Dashboard", envVars = "CARTO_API_KEY")
-```
+### Performance
 
-CARTO have said the raster basemaps are on a retirement path, so the keyless
-Esri fallback is the more durable of the two.
+Shiny runs each app in a single-threaded R process, so **R time spent on one visitor blocks every other visitor** on that process. The design keeps that near zero:
 
-**On zoom ceilings.** Esri's Gray Canvas renders to zoom 16 and World Imagery to
-zoom 19; past those they return a "no data here" placeholder rather than an
-error. Both layers therefore set `maxNativeZoom`, which makes Leaflet upscale the
-last real tile instead of requesting placeholders, and the map caps at zoom 19.
-If you swap in another tile source, check where it actually stops and set
-`maxNativeZoom` to match — the failure is silent and looks like a broken map.
+- All geometry is **serialised to GeoJSON once, at build time**. A visitor's browser receives a ready-made string and parses it itself.
+- Railways appear a moment after the map paints; shipping routes are only sent when ticked, and only re-sent when the year filter actually changes which routes are selected.
+- Network layouts are precomputed, so the server needs no `igraph`, and the country network looks the same on every visit.
 
-### Performance notes
-
-The bundle is ~2.8 MB. What actually governs whether the app feels fast, though,
-is how much geometry reaches each browser, and two rules keep that small:
-
-1. **No heavy layer is ever drawn inside `renderLeaflet`.** Both overlays are
-   pushed in afterwards via `leafletProxy`, triggered by the `input$map_groups`
-   event leaflet fires once the map has rendered. Railways start *visible* and so
-   arrive automatically a moment after the map paints; Shipping starts hidden and
-   is only sent if the user ticks it. Either way the map itself paints on a small
-   base payload. If you add another heavy overlay, follow the same pattern —
-   putting it inside `renderLeaflet` makes every visitor wait on it before they
-   see anything at all.
-2. **Geometry is pre-chewed offline**, not at request time. See
-   [`Dashboard/data/README.md`](Dashboard/data/README.md) for what each cache does.
-
-The number that matters most is **server time per session**: Shiny's R process is
-single-threaded, so seconds spent serialising geometry for one visitor block
-every other visitor on that process.
-
-| | before | after |
+| | Before | Now |
 |---|---|---|
-| Map's own first-paint payload | 75.4 MB | **379 KB, 0.17 s** |
-| Railways: server time / payload | 11.0 s / 2.7 MB | **2.6 s / 793 KB** |
-| Shipping: server time / payload | (part of the 75 MB) | **0.6 s / 1.7 MB** |
-| Railway vertices | 444,229 | 32,920 |
-| Shipping features drawn | 34,735 | 1,774 |
-| Redraws dragging the year slider | 20 | **3** |
-| Network build per R process | 1.3 s | 0.07 s (cache read) |
-| Literature tab, first visit | 20–40 s | instant |
-| Deployment bundle | 15 MB | 2.8 MB |
-
-Peak memory is now dominated by shared, process-level objects rather than
-per-session serialisation, so a 1 GB shinyapps.io instance is workable. The
-earlier crashes were the ~75 MB-per-session geometry spike.
-
-**If the railway layer still feels slow**, the lever is
-`RAILWAY_MIN_SEGMENT_M` in `Tools/build_app_cache.R`. Raising it from 500 m to
-1 km roughly halves the cost again (2.6 s → 1.6 s, 793 KB → 641 KB) at the price
-of dropping from 94.6% to 88.1% of the network by length.
+| R time per visitor, railways | 2.6 s | **< 0.01 s** |
+| R time when shipping is ticked | 0.7 s | **0.04 s** |
+| Process startup (libraries + data) | 6.6 s | **2.8 s** |
+| Memory per R process | 200 MB | **77 MB** |
+| Packages loaded by the app | 26 | **12** |
 
 ---
 
 ## Using the App
 
-Once running, the app displays an interactive world map with the following features:
-
-- **Pie chart markers** — Each location pin shows a pie chart of haplotype proportions. Click a pin to see a detailed breakdown.
-- **Filter Mode (sidebar):**
-  - *Exact Year* — Shows only samples collected in the selected year.
-  - *Up to Year* — Shows all samples collected up to and including the selected year (cumulative view). An animated playback button is available.
-  - *All Years* — Shows every sample regardless of year.
-- **Map layers (top-right control):**
-  - *Base* — Standard light map (CartoDB).
-  - *Satellite* — Esri satellite imagery.
-  - *Land Use* — Custom Mapbox style layer (requires internet access and a valid Mapbox token — already embedded in the script).
-  - *Country Status* — Toggleable overlay shading countries green (native) or orange (invasive) based on the invasive status file.
-- **Sample count** — The sidebar displays how many samples are currently shown.
-
----
-
-## Internet Access Requirement
-
-The app requires an active internet connection at startup to:
-- Download world country polygons via `rnaturalearth`.
-- Load the Mapbox "Land Use" tile layer (uses a token already embedded in the script).
-- Load CartoDB and Esri basemap tiles.
+- **Gene** (top of the page) — switches the map, year range, tree, and networks.
+- **Pie charts** — one per collection site, split by haplotype. Click one for a breakdown; with Shipping Routes on, that country's routes turn red.
+- **Temporal filter** — exact year, up to a year (with playback), a range, or all years.
+- **Map layers** — Base / Satellite, plus Land Use (Mapbox), Country Status, Railways and Shipping Routes.

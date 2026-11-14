@@ -7,8 +7,8 @@
 #
 # This is the RAW extract — one feature per OSM railway, ~32k of them. It is not
 # read by the app directly. Run Tools/build_app_cache.R afterwards to turn it
-# into the simplified, merged Dashboard/data/africa_railways.rds that the
-# dashboard actually loads.
+# into the simplified, merged railway layer in Dashboard/data/map_layers.rds
+# that the dashboard actually loads.
 #
 # After running, do NOT re-run unless you want to refresh the OSM data.
 # ================================================================================
