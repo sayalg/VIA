@@ -76,8 +76,6 @@ install.packages(c(
 ))
 ```
 
-Everything is on CRAN. Do **not** install the `strainhub` package: its `DESCRIPTION` declares none of its 27 imports, so it fails with `lazy loading failed for package 'strainhub'`. The one function used, `make_transnet()`, is vendored in [`Tools/strainhub_transnet.R`](Tools/strainhub_transnet.R) (Apache 2.0, with citation and deviations in its header).
-
 ---
 
 ## Directory Structure
@@ -142,22 +140,6 @@ CARTO now requires an API key for their raster basemap tiles, and serves tiles s
 | set | CartoDB Positron | native to 20 |
 
 A key is free at <https://carto.com/basemaps/apikey>. Set it at the top of `app.R`, or pass it at deploy time: `rsconnect::deployApp("Dashboard", envVars = "CARTO_API_KEY")`.
-
-### Performance
-
-Shiny runs each app in a single-threaded R process, so **R time spent on one visitor blocks every other visitor** on that process. The design keeps that near zero:
-
-- All geometry is **serialised to GeoJSON once, at build time**. A visitor's browser receives a ready-made string and parses it itself.
-- Railways appear a moment after the map paints; shipping routes are only sent when ticked, and only re-sent when the year filter actually changes which routes are selected.
-- Network layouts are precomputed, so the server needs no `igraph`, and the country network looks the same on every visit.
-
-| | Before | Now |
-|---|---|---|
-| R time per visitor, railways | 2.6 s | **< 0.01 s** |
-| R time when shipping is ticked | 0.7 s | **0.04 s** |
-| Process startup (libraries + data) | 6.6 s | **2.8 s** |
-| Memory per R process | 200 MB | **77 MB** |
-| Packages loaded by the app | 26 | **12** |
 
 ---
 
