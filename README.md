@@ -37,6 +37,18 @@ It takes about 20 seconds. Afterwards `Dashboard/` is ready to run or deploy.
 
 The sheet needs at least `Year`, `Country`, `Latitude`, `Longitude`, `City/Town`, `County/State` and the genotype column, plus `FASTA ID` if you add a tree. Excel-style headers (`City/Town`, `FASTA ID`) and R-style headers (`City.Town`, `FASTA.ID`) both work.
 
+### Update the genomic statistics (WGS and ddRAD)
+
+Edit `Input_Files/Genomics_stats.xlsx` and run the build. It needs three sheets:
+
+| Sheet | What it drives |
+|---|---|
+| `Data Descriptors` | Hover text (`Tool Tip`) and the "How to read these statistics" panel (`Info Panel`) for Tajima's D, π and FST, plus the "How to read these genomic statistics" row |
+| `WGS` | The map sidebar's **WGS data** table, one row per country |
+| `ddRAD` | Per-site table (map pop-ups); below a blank row, a one-line note and a per-region table whose header starts with `Region` (the **ddRAD data** table) |
+
+Columns are found by name (`Tajima`, `FST`, `Sample`…), so fixing a header's spelling is safe. Country names must match the `Country` column of the gene metadata (the build warns if one doesn't), or that row can't be highlighted when a pie chart is clicked. The WGS values come from `Scripts/Genomic_population_statistics.sh`.
+
 ### What the build does for you
 
 - **Missing coordinates** — first copied from any other gene's sheet that has the same `Sample ID` (so a sample sits in the same place under every gene), then looked up once per distinct address on OpenStreetMap and saved to `Input_Files/geocode_cache.csv`. Commit that file; reruns then make no network calls.
@@ -51,6 +63,7 @@ The sheet needs at least `Year`, `Country`, `Latitude`, `Longitude`, `City/Town`
 These produce the build's inputs, need their own tools, and only need rerunning when their sources change:
 
 - **Alignment and variant calling** — `Scripts/*.sh` (MAFFT etc.).
+- **WGS population statistics** — `Scripts/Genomic_population_statistics.sh` (vcftools on a PBS cluster).
 - **RAxML** to produce `tree.newick`, and **iTOL** to draw `tree.svg`.
 - **Railway and shipping extracts** — `Railway_Extraction/` and `Shipping_Extraction/` produce `Input_Files/*_raw.rds` (slow: Geofabrik downloads, the 40 MB UNCTAD table, Python `searoute`).
 
@@ -89,6 +102,7 @@ VIA/
 │   │       ├── tree.newick
 │   │       └── tree.svg
 │   ├── MTM_INVASIVE_VECTOR_SPECIES_*.xlsx   ← newest one is used
+│   ├── Genomics_stats.xlsx    ← WGS + ddRAD statistics (optional)
 │   ├── geocode_cache.csv      ← created by the build when it geocodes
 │   ├── africa_railways_raw.rds
 │   └── shipping_routes_raw.rds
@@ -146,6 +160,8 @@ A key is free at <https://carto.com/basemaps/apikey>. Set it at the top of `app.
 ## Using the App
 
 - **Gene** (top of the page) — switches the map, year range, tree, and networks.
-- **Pie charts** — one per collection site, split by haplotype. Click one for a breakdown; with Shipping Routes on, that country's routes turn red.
+- **Pie charts** — one per collection site, split by haplotype. Click one for a breakdown; its country is highlighted in the sidebar's WGS and ddRAD tables, and with Shipping Routes on, that country's routes turn red.
+- **Phylogenetic tree** — scroll or use + / − to zoom, drag to pan.
+- **The VIA logo/name** — returns to the map from any tab.
 - **Temporal filter** — exact year, up to a year (with playback), a range, or all years.
 - **Map layers** — Base / Satellite, plus Land Use (Mapbox), Country Status, Railways and Shipping Routes.

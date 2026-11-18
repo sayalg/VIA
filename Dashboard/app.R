@@ -57,7 +57,11 @@ local({
 genes      <- readRDS(file.path(DATA_DIR, "genes.rds"))
 map_layers <- readRDS(file.path(DATA_DIR, "map_layers.rds"))
 shipping   <- map_layers$shipping
-ddrad      <- map_layers$ddrad   # NULL when there is no ddRAD spreadsheet
+geno       <- map_layers$genomics   # NULL when there is no Genomics_stats.xlsx
+ddrad      <- geno$ddrad_sites
+
+# Same rule as the build: "Saudi Arabia" == "SaudiArabia".
+norm_country <- function(x) tolower(gsub("[^A-Za-z]", "", x))
 
 if (!seed_pubmed_cache(file.path(DATA_DIR, "pubmed_snapshot.rds"))) {
   message("No PubMed snapshot found — the Literature tab will fetch live on first visit.")
@@ -176,6 +180,52 @@ ddrad_popup <- function(lat, lon, country) {
     "<div style='color:#888;font-size:11px;margin-top:3px'>", src, "</div></div>"
   )
 }
+
+# ---- Genomic statistics (map sidebar) ------------------------------------------
+# WGS (per country) and ddRAD (per region) are separate tables on purpose: ddRAD
+# reads a small fraction of the genome, so its values aren't comparable to WGS.
+geno_tip <- function(key) geno$descriptors$tip[geno$descriptors$key == key]
+fmt_num  <- function(x, digits) ifelse(is.na(x), "—", formatC(x, format = "f", digits = digits))
+split_refs <- function(x) unique(trimws(unlist(strsplit(x, ";\\s*(?=[A-Z])", perl = TRUE))))
+
+# One table; rows whose country is `selected` (normalised) are highlighted.
+# `cite` is each row's short citation, shown on hover.
+geno_table <- function(d, name_col, name_label, selected, pi_digits, cite) {
+  tags$table(
+    class = "geno-table",
+    tags$thead(tags$tr(
+      tags$th(name_label),
+      tags$th(title = "Number of mosquitoes sequenced", "n"),
+      tags$th(title = paste("Nucleotide diversity (π):", geno_tip("pi")), "π"),
+      tags$th(title = paste("Tajima's D:", geno_tip("tajima_d")), "Tajima's D"),
+      tags$th(title = paste("Weighted FST:", geno_tip("fst"), "Negative values are shown as 0."),
+              HTML("F<sub>ST</sub>"))
+    )),
+    tags$tbody(lapply(seq_len(nrow(d)), function(i) tags$tr(
+      class = if (isTRUE(norm_country(d$country[i]) == selected)) "selected",
+      title = sprintf("%s: %s site%s, %s mosquitoes. %s", d[[name_col]][i], d$sites[i],
+                      if (isTRUE(d$sites[i] == 1)) "" else "s", d$n[i], cite[i]),
+      tags$td(d[[name_col]][i]),
+      tags$td(d$n[i]),
+      tags$td(fmt_num(d$pi[i], pi_digits)),
+      tags$td(fmt_num(d$tajima_d[i], 2)),
+      tags$td(fmt_num(pmax(d$fst[i], 0), 3))   # the descriptor sheet: negative FST counts as 0
+    )))
+  )
+}
+
+# Description card text for the tree and network tabs.
+explainer <- function(description, how, glossary) tagList(
+  tags$p(class = "help-text", description),
+  tags$h6(class = "explainer-head", "How to read it"),
+  tags$div(class = "help-text", how),
+  tags$details(
+    class = "explainer-glossary",
+    tags$summary("Glossary"),
+    tags$dl(class = "help-text", lapply(names(glossary), function(k)
+      tagList(tags$dt(k), tags$dd(glossary[[k]]))))
+  )
+)
 
 add_pie_markers <- function(map, data, color_palette,
                             lat_col       = "Latitude",
@@ -373,8 +423,13 @@ app_theme <- bs_theme(
 # ================================================================================
 
 ui <- page_navbar(
-  title = tags$span(
-    tags$img(src = "logo.png", height = "100px", style = "margin-right:10px;vertical-align:middle"),
+  # Clicking the logo or name goes back to the map.
+  title = tags$a(
+    href    = "#",
+    class   = "brand-home",
+    title   = "Back to the map",
+    onclick = "document.querySelector('.navbar a[data-value=\"map_tab\"]').click(); return false;",
+    tags$img(src = "logo.png", height = "100px", alt = "", style = "margin-right:10px;vertical-align:middle"),
     "The Vector Invasion Atlas"
   ),
   theme    = app_theme,
@@ -388,7 +443,54 @@ ui <- page_navbar(
       "Shiny.addCustomMessageHandler('scroll_to', function(id) {
          setTimeout(function() { var el = document.getElementById(id);
            if (el) el.scrollIntoView({behavior: 'smooth'}); }, 150);
-       });"))
+       });
+
+       // Pan/zoom for the tree figure. The SVG is inlined and zoomed by editing
+       // its viewBox, so it stays sharp at any zoom and only the visible part is drawn.
+       function treeZoom(boxId, src) {
+         var box = document.getElementById(boxId);
+         fetch(src).then(function(r) { return r.text(); }).then(function(txt) {
+           var view = box.querySelector('.tree-zoom-view');
+           view.innerHTML = txt;
+           var svg = view.querySelector('svg');
+           var w = +svg.getAttribute('width'), h = +svg.getAttribute('height');
+           if (!svg.getAttribute('viewBox')) svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+           var home = svg.getAttribute('viewBox').split(/[ ,]+/).map(Number), vb = home.slice();
+           svg.removeAttribute('width'); svg.removeAttribute('height');
+           function set(v) { vb = v; svg.setAttribute('viewBox', v.join(' ')); }
+           function toSvg(cx, cy) {                       // screen -> SVG coordinates
+             var p = svg.createSVGPoint(); p.x = cx; p.y = cy;
+             return p.matrixTransform(svg.getScreenCTM().inverse());
+           }
+           function zoom(f, cx, cy) {
+             f = Math.min(f, vb[2] / (home[2] / 40)); f = Math.max(f, vb[2] / home[2]);   // 1x-40x
+             var q = toSvg(cx, cy);
+             set([q.x - (q.x - vb[0]) / f, q.y - (q.y - vb[1]) / f, vb[2] / f, vb[3] / f]);
+           }
+           function centre() { var r = view.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }
+           view.addEventListener('wheel', function(e) {
+             e.preventDefault(); zoom(e.deltaY < 0 ? 1.25 : 0.8, e.clientX, e.clientY);
+           }, {passive: false});
+           var last = null;
+           view.addEventListener('pointerdown', function(e) {
+             last = [e.clientX, e.clientY]; view.setPointerCapture(e.pointerId); view.classList.add('dragging');
+           });
+           view.addEventListener('pointermove', function(e) {
+             if (!last) return;
+             var k = svg.getScreenCTM().a;               // screen px per SVG unit
+             set([vb[0] - (e.clientX - last[0]) / k, vb[1] - (e.clientY - last[1]) / k, vb[2], vb[3]]);
+             last = [e.clientX, e.clientY];
+           });
+           function stop() { last = null; view.classList.remove('dragging'); }
+           view.addEventListener('pointerup', stop); view.addEventListener('pointercancel', stop);
+           box.querySelectorAll('[data-zoom]').forEach(function(b) {
+             b.addEventListener('click', function() {
+               var c = centre(), z = b.getAttribute('data-zoom');
+               if (z === 'reset') set(home.slice()); else zoom(+z, c[0], c[1]);
+             });
+           });
+         });
+       }"))
   ),
 
   # ---- Gene selector (top-right of navbar) -----------------------------------
@@ -437,7 +539,7 @@ ui <- page_navbar(
       fillable = FALSE,
 
       sidebar = sidebar(
-        width = 280,
+        width = 330,   # fits the genomic tables' five columns
         open  = TRUE,
 
         tags$div(class = "sidebar-section-header", "Temporal Filter"),
@@ -479,7 +581,23 @@ ui <- page_navbar(
         hr(class = "sidebar-divider"),
         tags$div(class = "sidebar-section-header", "Summary"),
         uiOutput("sample_count_ui"),
-        uiOutput("no_data_warning")
+        uiOutput("no_data_warning"),
+
+        if (!is.null(geno)) tagList(
+          hr(class = "sidebar-divider"),
+          tags$div(class = "sidebar-section-header", "Genomic statistics"),
+          tags$p(class = "geno-hint", "Click a pie chart to highlight its country. Hover over a heading for its meaning."),
+          uiOutput("genomic_ui"),
+          tags$details(
+            class = "geno-key",
+            tags$summary("How to read these statistics"),
+            tags$p(geno$reading),
+            lapply(seq_len(nrow(geno$descriptors)), function(i)
+              tags$p(tags$b(paste0(geno$descriptors$label[i], ": ")), geno$descriptors$info[i])),
+            tags$p(tags$a(href = "#", onclick = "Shiny.setInputValue('show_genomic_about', Date.now()); return false;",
+                          "Sources and more: About › Genomic Statistics"))
+          )
+        )
       ),
 
       card(
@@ -503,11 +621,44 @@ ui <- page_navbar(
       card(
         card_header(tags$span(icon("circle-info"), " About this Tree")),
         class = "controls-card",
-        tags$p(class = "help-text",
-               "Maximum likelihood phylogenetic tree of", tags$em("Anopheles stephensi"),
-               "haplotypes inferred with RAxML. Tree is hosted and visualised
-              interactively via iTOL. Use the iTOL toolbar to zoom, collapse clades,
-              and export the figure.")
+        explainer(
+          tagList(
+            "Maximum likelihood phylogenetic tree of ", tags$em("Anopheles stephensi"), " COI
+            sequences. This family tree shows how mosquitoes from different places are related,
+            based on one short stretch of mitochondrial DNA (the COI gene). It was inferred with
+            RAxML and drawn with iTOL. Scroll or use the + and − buttons to zoom, drag to move
+            around, and use Download SVG to save the full figure."
+          ),
+          tags$p(
+            "Each tip (end of a branch) is one sequenced mosquito, labelled with its sample ID and
+            country. Up to 20 mosquitoes per country and year are included, so heavily sampled
+            places don't dominate the tree. Tips that sit close together have more similar
+            sequences, and mosquitoes that share a haplotype sit side by side. Groups of tips that
+            share a common branch point are called clades; think of them as extended families of
+            related sequences. Longer branches mean more DNA differences between sequences.
+            Numbers at branch points show how strongly the data support that grouping, with higher
+            values meaning more confidence."
+          ),
+          list(
+            "Phylogenetic tree" = "A diagram of evolutionary relationships, like a family tree.
+              Sequences that share a more recent common ancestor sit closer together.",
+            "COI" = "A gene in mosquito mitochondria (the cell's energy-producing structures) that
+              is read in many species. It changes slowly enough to compare populations and is
+              inherited only from the mother, so the tree traces maternal lineages.",
+            "Haplotype" = "One distinct version of a DNA sequence. Many mosquitoes can share the
+              same haplotype.",
+            "Clade" = "A branch and everything that descends from it: a group of sequences that
+              likely share a common ancestor.",
+            "Branch length" = "The amount of genetic change between points on the tree. It
+              reflects DNA differences, not distance in kilometres or years.",
+            "Maximum likelihood" = "A statistical method that tests many possible trees and picks
+              the one that best explains the observed DNA differences.",
+            "Bootstrap support" = "The numbers at branch points: a confidence score from repeating
+              the analysis on resampled data. Higher values mean a grouping appeared more
+              consistently.",
+            "iTOL" = "Interactive Tree Of Life, the web tool used to draw this figure."
+          )
+        )
       ),
 
       card(
@@ -525,15 +676,51 @@ ui <- page_navbar(
     layout_columns(
       col_widths = c(3, 9),
 
+      # Wording follows the reviewer responses: arrows are inferred country changes
+      # on the COI tree, not observed movement, and the betweenness ranking is not
+      # stable under resampling, so no country is called a hub.
       card(
-        hr(class = "sidebar-divider"),
-        tags$p(class = "help-text",
-               style = "padding: 72px; font-size: 16px; margin: 8px 0;",
-               icon("circle-info"),
-               " Node size shows betweenness centrality: how often a country lies on the shortest path between other countries.",
-               " Each arrow means a lineage sampled in one country has its closest inferred ancestor in another, based on the COI tree.",
-               " Edge width counts how many such changes were inferred.",
-               " Arrows are possible dispersal pathways from a single gene, not measured mosquito movement.")
+        card_header(tags$span(icon("circle-info"), " About this Network")),
+        class = "controls-card",
+        explainer(
+          tagList(
+            "This network uses one mitochondrial gene (COI) to estimate which countries ",
+            tags$em("An. stephensi"), " lineages may have moved between. Each circle is a country.
+            Each arrow points from the country inferred for a lineage's ancestor on the COI tree to
+            the country where its descendants were sampled, and thicker arrows mean that change was
+            inferred more often. Larger circles have higher betweenness centrality: they lie
+            between many other countries in this network. These are hypotheses drawn from genetic
+            patterns, not observed movements of mosquitoes."
+          ),
+          tags$ul(
+            tags$li(tags$b("Circles: "), "many of the network's shortest routes between other
+                    countries pass through this country."),
+            tags$li(tags$b("Arrows: "), "the tree repeatedly places an ancestor in one country
+                    and its descendants in the other, in that direction. Hover over an arrow for
+                    the count."),
+            tags$li(tags$b("Arrow direction: "), "from the inferred ancestral country toward the
+                    country where descendants were sampled."),
+            tags$li(tags$b("No arrow: "), "no change between those countries was inferred in this
+                    dataset. It does not prove there was none: countries with few samples have
+                    fewer chances to show links.")
+          ),
+          list(
+            "Node" = "A country in the dataset.",
+            "Arrow" = "An inferred change of country between an ancestor and its descendants on the
+              COI tree: a possible dispersal pathway, not a measured movement of mosquitoes.",
+            "Arrow thickness" = "How many times that change was inferred.",
+            "Betweenness centrality" = "How often a country lies on the shortest path between two
+              other countries in this network. It reflects the network's shape, which depends on
+              which countries were sampled and how heavily. It does not measure how many mosquitoes
+              live there.",
+            "Ancestral state" = "The country inferred for a common ancestor on the family tree,
+              used to decide where a lineage came from.",
+            "Maximum parsimony" = "A method that assigns each ancestor the country that explains the
+              data with the fewest moves between countries.",
+            "COI" = "A mitochondrial gene inherited from the mother, so this network traces maternal
+              lineages only."
+          )
+        )
       ),
 
       card(
@@ -596,37 +783,6 @@ ui <- page_navbar(
           tags$p(
             "Scripts available here: ", tags$a(href= "https://github.com/sayalg/VIA", "https://github.com/sayalg/VIA")
           ),
-          if (!is.null(ddrad) && nrow(ddrad)) tagList(
-            tags$h5(id = "genomic-data", "Genome-wide data (ddRAD-seq)"),
-            tags$p(paste0(
-              "At ", nrow(ddrad), " collection sites in ",
-              paste(sort(unique(ddrad$country)), collapse = ", "),
-              ", the map pop-up also shows genome-wide statistics from double-digest ",
-              "restriction-site-associated DNA sequencing (ddRAD-seq). They come from the ",
-              "published studies below, not from the COI data, and don't change with the ",
-              "year filter."
-            )),
-            tags$ul(
-              tags$li(tags$b("Samples:"), " individuals genotyped at the site."),
-              tags$li(tags$b("π (nucleotide diversity):"),
-                      " the average genetic difference between two individuals from the site.
-                      Higher values mean more genetic diversity."),
-              tags$li(tags$b("S (segregating sites):"),
-                      " the number of polymorphic positions found. S rises with sample size,
-                      so compare sites with similar numbers of samples."),
-              tags$li(tags$b("Tajima's D:"),
-                      " compares π with S. Values near 0 fit a population of stable size;
-                      positive values can reflect a recent bottleneck or population structure,
-                      and negative values a recent expansion.")
-            ),
-            tags$p("Sources:"),
-            tags$ul(lapply(unique(ddrad$source), function(s) {
-              doi <- ddrad$doi[match(s, ddrad$source)]
-              if (is.na(doi)) return(tags$li(s))
-              tags$li(sub(doi, "", s, fixed = TRUE),
-                      tags$a(href = doi, target = "_blank", rel = "noopener", doi))
-            }))
-          ),
           tags$h5("Contact"),
           tags$p("For questions or data requests, contact: ",
                  tags$a(href = "mailto:Tamar_Carter@baylor.edu", "Tamar_Carter@baylor.edu")),
@@ -635,6 +791,53 @@ ui <- page_navbar(
           tags$hr(),
           tags$p(class = "text-muted small",
                  paste0("Built with R Shiny & bslib | Last updated: ", format(Sys.Date(), "%B %Y")))
+        )
+      )
+    ),
+
+    # Opened by the (i) in a ddRAD pop-up and the link under the sidebar tables.
+    nav_panel(
+      "Genomic Statistics",
+      value = "genomics_tab",
+      card(
+        class = "about-card",
+        card_body(
+          tags$h4(id = "genomics-top", "Genomic statistics (WGS and ddRAD)"),
+          if (is.null(geno)) tags$p(
+            "No genomic statistics yet. Add ", tags$code("Input_Files/Genomics_stats.xlsx"),
+            " and rerun ", tags$code("Rscript Tools/build_app_cache.R"), "."
+          ) else tagList(
+            tags$p(paste0(
+              "The map sidebar lists genome-wide statistics from two kinds of sequencing, kept ",
+              "apart because their values can't be compared: whole-genome sequencing (WGS), per ",
+              "country, and double-digest restriction-site-associated DNA sequencing (ddRAD), per ",
+              "region. ", geno$ddrad_note, " Clicking a pie chart highlights its country, and the ",
+              "pop-ups of pie charts at the ", nrow(ddrad), " ddRAD collection sites in ",
+              paste(sort(unique(ddrad$country)), collapse = ", "), " also show that site's values. ",
+              "These come from the published studies below, not from the COI data, and don't ",
+              "change with the year filter."
+            )),
+            tags$h5("How to read these statistics"),
+            tags$p(geno$reading),
+            tags$ul(
+              lapply(seq_len(nrow(geno$descriptors)), function(i)
+                tags$li(tags$b(paste0(geno$descriptors$label[i], ": ")), geno$descriptors$info[i])),
+              tags$li(tags$b("S (segregating sites, ddRAD pop-ups only): "),
+                      "the number of variable DNA positions found at the site. S rises with the
+                      number of mosquitoes sequenced, so compare sites with similar sample sizes."),
+              tags$li(tags$b("n / Samples: "), "the number of mosquitoes sequenced.")
+            ),
+            tags$h5("Sources"),
+            tags$ul(
+              lapply(split_refs(geno$wgs$source), function(s) tags$li(s, " (WGS)")),
+              lapply(split_refs(c(ddrad$source, geno$ddrad_regions$source)), function(s) {
+                doi <- regmatches(s, regexpr("https?://doi\\.org/\\S+[^.\\s]", s, perl = TRUE))
+                if (!length(doi)) return(tags$li(s, " (ddRAD)"))
+                tags$li(sub(doi, "", s, fixed = TRUE),
+                        tags$a(href = doi, target = "_blank", rel = "noopener", doi), " (ddRAD)")
+              })
+            )
+          )
         )
       )
     )
@@ -754,10 +957,34 @@ server <- function(input, output, session) {
     if (!is.na(country)) selected_location(unname(country))
   })
 
-  # The (i) in a pop-up's ddRAD block opens the About page's explanation.
+  # WGS and ddRAD boxes; the clicked pie's country is highlighted.
+  output$genomic_ui <- renderUI({
+    loc <- selected_location()
+    sel <- if (is.null(loc)) "" else norm_country(loc)
+    reg <- geno$ddrad_regions
+    tagList(
+      tags$div(
+        class = "geno-box",
+        tags$div(class = "geno-title", "WGS data", tags$span("whole genome, per country")),
+        geno_table(geno$wgs, "country", "Country", sel, 4, geno$wgs$source),
+        tags$div(class = "geno-src", "Sources: ", paste(split_refs(geno$wgs$source), collapse = "; "))
+      ),
+      if (!is.null(reg)) tags$div(
+        class = "geno-box",
+        tags$div(class = "geno-title", "ddRAD data", tags$span("reduced representation, per region")),
+        tags$p(class = "geno-note", geno$ddrad_note),
+        geno_table(reg, "region", "Region", sel, 3, reg$short),
+        tags$div(class = "geno-src",
+                 "Per-site values: click a pie in ", paste(sort(unique(ddrad$country)), collapse = ", "),
+                 ". Sources: ", paste(split_refs(c(reg$short, ddrad$short)), collapse = "; "))
+      )
+    )
+  })
+
+  # The (i) in a pop-up's ddRAD block opens the Genomic Statistics page.
   observeEvent(input$show_genomic_about, {
-    nav_select("main_nav", "about_tab")
-    session$sendCustomMessage("scroll_to", "genomic-data")
+    nav_select("main_nav", "genomics_tab")
+    session$sendCustomMessage("scroll_to", "genomics-top")
   })
 
   # Reset on empty map click
@@ -825,7 +1052,7 @@ server <- function(input, output, session) {
     }
     tagList(
       card_header(
-        paste0("iTOL — ", name, " Maximum Likelihood Tree"),
+        paste(name, "Maximum Likelihood Tree"),
         tags$a(
           href     = svg,
           download = paste0("anopheles_stephensi_", name, "_tree.svg"),
@@ -833,7 +1060,17 @@ server <- function(input, output, session) {
           icon("download"), " Download SVG"
         )
       ),
-      tags$img(src = svg, width = "100%", style = "height:700px; object-fit:contain;")
+      tags$div(
+        id = "tree_zoom", class = "tree-zoom",
+        tags$div(class = "tree-zoom-view"),
+        tags$div(
+          class = "tree-zoom-btns",
+          tags$button(type = "button", `data-zoom` = "1.5", title = "Zoom in", "+"),
+          tags$button(type = "button", `data-zoom` = "0.667", title = "Zoom out", "−"),
+          tags$button(type = "button", `data-zoom` = "reset", title = "Fit the whole tree", "Reset")
+        )
+      ),
+      tags$script(HTML(sprintf("treeZoom('tree_zoom', '%s');", svg)))
     )
   })
 

@@ -16,11 +16,11 @@
 #   Input_Files/MTM_INVASIVE_*.xlsx        newest file is used
 #   Input_Files/africa_railways_raw.rds    <- Railway_Extraction/prepare_africa_railways.R
 #   Input_Files/shipping_routes_raw.rds    <- Shipping_Extraction/prepare_shipping_routes.R
-#   Input_Files/ddRAD_genomic_dataset.xlsx per-site genome-wide statistics (optional)
+#   Input_Files/Genomics_stats.xlsx       WGS + ddRAD statistics and their descriptions (optional)
 #
 # Outputs
 #   Dashboard/data/genes.rds               per gene: map table, palette, networks
-#   Dashboard/data/map_layers.rds          country status, pre-serialised GeoJSON, ddRAD sites
+#   Dashboard/data/map_layers.rds          country status, pre-serialised GeoJSON, genomic statistics
 #   Dashboard/data/pubmed_snapshot.rds     Literature tab seed (left as-is if offline)
 #   Dashboard/www/genes/<GENE>/tree.svg    copied from the gene folder
 #   Input_Files/geocode_cache.csv          addresses already looked up — commit it
@@ -54,7 +54,7 @@ WWW_GENES      <- "Dashboard/www/genes"
 GEOCODE_CACHE  <- "Input_Files/geocode_cache.csv"
 RAW_RAILWAYS   <- "Input_Files/africa_railways_raw.rds"
 RAW_SHIPPING   <- "Input_Files/shipping_routes_raw.rds"
-DDRAD_XLSX     <- "Input_Files/ddRAD_genomic_dataset.xlsx"
+GENOMICS_XLSX  <- "Input_Files/Genomics_stats.xlsx"
 
 # Every gene's metadata.csv needs these (either header style works — see
 # read_gene()), plus its own genotype/haplotype column, plus FASTA.ID if the
@@ -302,10 +302,14 @@ build_strainhub <- function(md, tree_file) {
                          treeType = "parsimonious", metricsOutputFile = "")
 
   nodes <- graph$x$nodes %>% mutate(shape = "dot", color = "grey", font.size = 35)
+  # `value` (number of inferred changes) is kept so vis.js scales arrow width by
+  # it. The old fixed widths covered only 1-3 changes, so the 25 edges with more
+  # had no width and drew thinnest.
+  lab <- setNames(nodes$label, nodes$id)
   edges <- graph$x$edges %>%
-    mutate(arrows = "to", smooth = TRUE, color = "black",
-           width  = case_when(value == 1 ~ 1, value == 2 ~ 5, value == 3 ~ 20),
-           value  = NULL, length = 500)
+    mutate(arrows = "to", smooth = TRUE, color = "black", length = 500,
+           title  = paste0(lab[as.character(from)], " → ", lab[as.character(to)], ": ",
+                           value, " inferred change", ifelse(value == 1, "", "s")))
   list(nodes = nodes, edges = edges)
 }
 
@@ -485,31 +489,127 @@ message(sprintf("  %d unique routes (from %d rows), %s of GeoJSON", nrow(routes)
                 nrow(flat), fmt(sum(nchar(ship_features)))))
 
 # ================================================================================
-# 5. ddRAD SITES (optional) — genome-wide statistics shown in the map pop-ups
+# 5. GENOMIC STATISTICS (optional) — WGS and ddRAD boxes, map pop-ups, About
 # ================================================================================
-message("\n[5/6] ddRAD sites")
-ddrad <- NULL
-if (file.exists(DDRAD_XLSX)) {
-  cols <- c("Site", "Country", "Latitude", "Longitude", "Sample size", "π", "S", "Tajima's D", "Source")
-  d <- readxl::read_excel(DDRAD_XLSX, .name_repair = "unique_quiet")
-  lost <- setdiff(cols, names(d))
-  if (length(lost)) stop(DDRAD_XLSX, " is missing column(s): ", paste(lost, collapse = ", "), call. = FALSE)
-  d <- as.data.frame(d[!is.na(d$Site) & !is.na(d$Latitude) & !is.na(d$Longitude), cols])
-  names(d) <- c("site", "country", "lat", "lon", "n", "pi", "S", "tajima_d", "source")
+# Sheets of GENOMICS_XLSX:
+#   "Data Descriptors"  Statistic | Scale | Tool Tip | Info Panel, then a
+#                       "How to read these genomic statistics" row
+#   "WGS"               one row per country
+#   "ddRAD"             per-site table; below a blank row, a one-line note and a
+#                       per-region table whose header row starts with "Region"
+# Columns are found by name pattern, so fixing a header's spelling doesn't break it.
+message("\n[5/6] Genomic statistics")
+genomics <- NULL
+if (file.exists(GENOMICS_XLSX)) {
+  lost <- setdiff(c("Data Descriptors", "WGS", "ddRAD"), readxl::excel_sheets(GENOMICS_XLSX))
+  if (length(lost)) stop(GENOMICS_XLSX, " is missing sheet(s): ", paste(lost, collapse = ", "), call. = FALSE)
 
-  # Pop-ups show "Samake et al. 2023", linked to the DOI when the source has one.
-  doi <- regmatches(d$source, regexpr("https?://doi\\.org/\\S+", d$source))
-  d$doi <- NA_character_
-  d$doi[grepl("https?://doi\\.org/", d$source)] <- sub("\\.$", "", doi)
-  d$short <- paste0(sub("^(\\w+).*$", "\\1", d$source),
-                    ifelse(grepl("&|et al", d$source), " et al.", ""), " ",
-                    sub("^.*?\\b((19|20)\\d{2})\\b.*$|^.*$", "\\1", d$source, perl = TRUE),
-                    ifelse(grepl("Order No|thesis|dissertation", d$source, ignore.case = TRUE),
-                           " (dissertation)", ""))
-  ddrad <- d
-  message(sprintf("  %d sites from %s", nrow(d), basename(DDRAD_XLSX)))
+  # The one column of `d` whose header matches `pattern`, as numbers if `num`.
+  pick <- function(d, pattern, sheet, num = FALSE) {
+    i <- grep(pattern, names(d), ignore.case = TRUE, perl = TRUE)
+    if (length(i) != 1) stop(GENOMICS_XLSX, ", sheet ", sheet, ": expected one column matching '",
+                             pattern, "', found ", length(i), call. = FALSE)
+    x <- d[[i]]
+    if (num) suppressWarnings(as.numeric(x)) else trimws(as.character(x))
+  }
+  # "Samake et al. 2023" (+ " (dissertation)"), one per ";"-separated citation.
+  short_cite <- function(src) vapply(strsplit(src, ";\\s*(?=[A-Z])", perl = TRUE), function(p) {
+    paste(paste0(sub("^(\\w+).*$", "\\1", p),
+                 ifelse(grepl("&|et al", p), " et al.", ""), " ",
+                 sub("^.*?\\b((19|20)\\d{2})\\b.*$|^.*$", "\\1", p, perl = TRUE),
+                 ifelse(grepl("Order No|thesis|dissertation", p, ignore.case = TRUE), " (dissertation)", "")),
+          collapse = "; ")
+  }, character(1))
+  first_doi <- function(src) sub("\\.$", "", ifelse(grepl("https?://doi\\.org/", src),
+                                  sub("^.*?(https?://doi\\.org/\\S+).*$", "\\1", src), NA_character_))
+  # Countries spelled as in the gene metadata, for highlighting the clicked pie's country.
+  known_countries <- unique(unlist(lapply(all_genes, function(g) g$md$Country)))
+  check_countries <- function(x, sheet) {
+    bad <- unique(x[!norm_country(x) %in% norm_country(known_countries)])
+    if (length(bad)) warning(GENOMICS_XLSX, ", sheet ", sheet, ": ", paste0("'", bad, "'", collapse = ", "),
+                             " not found in any gene's metadata.csv; check the spelling (its row ",
+                             "can't be highlighted on the map).", call. = FALSE)
+  }
+
+  # ---- Descriptors ----
+  dd <- as.data.frame(readxl::read_excel(GENOMICS_XLSX, sheet = "Data Descriptors", .name_repair = "unique_quiet"))
+  stat <- pick(dd, "^Statistic", "Data Descriptors")
+  tip  <- pick(dd, "Tool ?Tip", "Data Descriptors")
+  info <- pick(dd, "Info ?Panel", "Data Descriptors")
+  key  <- ifelse(grepl("Tajima", stat), "tajima_d", ifelse(grepl("π|Nucleotide", stat), "pi",
+                 ifelse(grepl("FST", stat, ignore.case = TRUE), "fst", NA)))
+  descriptors <- data.frame(key = key, label = stat, tip = tip, info = info)[!is.na(key) & !is.na(tip), ]
+  how <- which(grepl("^How to read", stat))
+  reading <- if (length(how)) unname(na.omit(unlist(dd[how[1], -1]))[1]) else NA_character_
+  if (!setequal(descriptors$key, c("tajima_d", "pi", "fst")))
+    stop(GENOMICS_XLSX, ", sheet Data Descriptors: expected rows for Tajima's D, π and FST", call. = FALSE)
+
+  # ---- WGS ----
+  w <- as.data.frame(readxl::read_excel(GENOMICS_XLSX, sheet = "WGS", .name_repair = "unique_quiet"))
+  wgs <- data.frame(country  = pick(w, "^(Population|Country)", "WGS"),
+                    sites    = pick(w, "Sites", "WGS", TRUE),
+                    n        = pick(w, "Sample", "WGS", TRUE),
+                    tajima_d = pick(w, "Tajima", "WGS", TRUE),
+                    pi       = pick(w, "Diversity|π", "WGS", TRUE),
+                    fst      = pick(w, "FST", "WGS", TRUE),
+                    source   = pick(w, "Source", "WGS"))
+  wgs <- wgs[!is.na(wgs$country) & wgs$country != "", ]
+  check_countries(wgs$country, "WGS")
+
+  # ---- ddRAD: site table, note, region table, stacked on one sheet ----
+  g <- as.data.frame(readxl::read_excel(GENOMICS_XLSX, sheet = "ddRAD", col_names = FALSE,
+                                        .name_repair = "unique_quiet"))
+  g[] <- lapply(g, function(x) trimws(as.character(x)))
+  blank <- rowSums(!is.na(g)) == 0
+  block <- function(from) {           # header row `from` to the next blank row
+    to <- c(which(blank & seq_along(blank) > from), nrow(g) + 1)[1] - 1
+    d  <- g[seq(from + 1, length.out = max(0, to - from)), , drop = FALSE]
+    names(d) <- unlist(g[from, ])
+    d[, !is.na(names(d)), drop = FALSE]
+  }
+  s <- block(1)
+  ddrad <- data.frame(site     = pick(s, "^Site$", "ddRAD"),
+                      country  = pick(s, "^Country$", "ddRAD"),
+                      lat      = pick(s, "^Lat", "ddRAD", TRUE),
+                      lon      = pick(s, "^Lon", "ddRAD", TRUE),
+                      n        = pick(s, "Sample", "ddRAD", TRUE),
+                      pi       = pick(s, "^(π|pi)$|Diversity", "ddRAD", TRUE),
+                      S        = pick(s, "^S$", "ddRAD", TRUE),
+                      tajima_d = pick(s, "Tajima", "ddRAD", TRUE),
+                      source   = pick(s, "Source", "ddRAD"))
+  ddrad <- ddrad[!is.na(ddrad$site) & !is.na(ddrad$lat) & !is.na(ddrad$lon), ]
+  ddrad$doi   <- first_doi(ddrad$source)
+  ddrad$short <- short_cite(ddrad$source)
+  check_countries(ddrad$country, "ddRAD")
+
+  hdr <- which(g[[1]] == "Region")[1]
+  row  <- seq_len(nrow(g))
+  note <- na.omit(g[[1]][row > nrow(s) + 1 & (is.na(hdr) | row < hdr)])
+  regions <- NULL
+  if (!is.na(hdr)) {
+    r <- block(hdr)
+    regions <- data.frame(region   = pick(r, "^Region$", "ddRAD"),
+                          sites    = pick(r, "Sites", "ddRAD", TRUE),
+                          n        = pick(r, "Sample", "ddRAD", TRUE),
+                          pi       = pick(r, "π|Diversity", "ddRAD", TRUE),
+                          tajima_d = pick(r, "Tajima", "ddRAD", TRUE),
+                          fst      = pick(r, "FST", "ddRAD", TRUE),
+                          source   = pick(r, "Source", "ddRAD"))
+    regions <- regions[!is.na(regions$region), ]
+    # "NE Ethiopia" -> Ethiopia: the site-table country named in the region.
+    cs <- unique(ddrad$country)
+    regions$country <- vapply(regions$region, function(x) c(cs[vapply(cs, grepl, logical(1), x = x, fixed = TRUE)], NA)[1], "")
+    if (anyNA(regions$country)) warning(GENOMICS_XLSX, ", sheet ddRAD: no country found in region(s) ",
+                                        paste(regions$region[is.na(regions$country)], collapse = ", "), call. = FALSE)
+    regions$short <- short_cite(regions$source)
+  }
+
+  genomics <- list(descriptors = descriptors, reading = reading, wgs = wgs,
+                   ddrad_sites = ddrad, ddrad_regions = regions, ddrad_note = paste(note, collapse = " "))
+  message(sprintf("  WGS: %d countries | ddRAD: %d sites, %d regions | %d descriptors",
+                  nrow(wgs), nrow(ddrad), NROW(regions), nrow(descriptors)))
 } else {
-  message("  none (", DDRAD_XLSX, " not found)")
+  message("  none (", GENOMICS_XLSX, " not found)")
 }
 
 # ---- Self-check: everything the browser will JSON.parse() actually parses ----
@@ -526,11 +626,11 @@ saveRDS(list(country_status   = country_status,
              railway_types    = sort(unique(rail$fclass)),
              railway_colours  = RAIL_COLOURS,
              shipping         = shipping,
-             ddrad            = ddrad),
+             genomics         = genomics),
         file.path(DATA_DIR, "map_layers.rds"), compress = "xz")
 
 # ================================================================================
-# 5. PUBMED SNAPSHOT
+# 6. PUBMED SNAPSHOT
 # ================================================================================
 message("\n[6/6] PubMed snapshot")
 old <- setwd("Dashboard"); source("pubmed_module.R"); setwd(old)

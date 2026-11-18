@@ -1,0 +1,2 @@
+# Shell scripts run on Linux (PBS cluster): keep LF line endings on checkout.
+*.sh text eol=lf
