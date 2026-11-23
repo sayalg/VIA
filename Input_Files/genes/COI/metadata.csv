@@ -1,4 +1,4 @@
-FASTA.ID,Accession.ID,Sample.ID,Year,Country,Clade.Designation,Native.Invasive,Latitude,Longitude,County.State,City.Town,Haplotype,Urban.Rural.Habitat,Breeding.habitat,Type.of.Collection
+FASTA.ID,Accession.ID,Sample.ID,Year,Country,Clade.Designation,Native.Invasive,Latitude,Longitude,County.State,City.Town,COI,Urban.Rural.Habitat,Breeding.habitat,Type.of.Collection
 AfkB9_Afghanistan,ERR13695718,AfkB9,2015,Afghanistan,Major,Native,34.8466,71.0973,Kunar,Kunar,Hap1,Rural,NA,Immature
 AfkC4_Afghanistan,ERR13695719,AfkC4,2015,Afghanistan,Major,Native,34.8466,71.0973,Kunar,Kunar,Hap1,Rural,NA,Immature
 AfkC5_Afghanistan,ERR13695720,AfkC5,2015,Afghanistan,Major,Native,34.8466,71.0973,Kunar,Kunar,Hap1,Rural,NA,Immature

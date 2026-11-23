@@ -143,75 +143,91 @@ create_base_map <- function(tile_size = 256) {
   m
 }
 
-# Genome-wide (ddRAD) block for the pop-up of a pie at lat/lon in `country`, or
-# "" if no ddRAD site matches. A match is the nearest ddRAD site in the same
-# country within DDRAD_MATCH_KM: the spreadsheet's coordinates for a town differ
-# from the COI ones by up to ~3 km (Hargeisa), and Loyada (Djibouti) is 4 km
-# from Lawyacado (Somalia), hence the country check.
-DDRAD_MATCH_KM <- 5
-
-ddrad_popup <- function(lat, lon, country) {
-  if (is.null(ddrad) || !nrow(ddrad) || is.na(country)) return("")
-  r  <- pi / 180
-  km <- 6371 * 2 * asin(sqrt(sin((ddrad$lat - lat) * r / 2)^2 +
-                             cos(lat * r) * cos(ddrad$lat * r) * sin((ddrad$lon - lon) * r / 2)^2))
-  km[tolower(trimws(ddrad$country)) != tolower(trimws(country))] <- Inf
-  i <- which.min(km)
-  if (km[i] > DDRAD_MATCH_KM) return("")
-  s <- ddrad[i, ]
-
-  src <- htmltools::htmlEscape(s$short)
-  if (!is.na(s$doi)) src <- sprintf("<a href='%s' target='_blank' rel='noopener'>%s</a>", s$doi, src)
-  row <- function(label, value, tip) sprintf(
-    "<tr title='%s'><td style='padding:1px 8px 1px 0;color:#555'>%s</td><td>%s</td></tr>", tip, label, value)
-
-  paste0(
-    "<div style='margin-top:8px;padding-top:6px;border-top:1px solid #e3e3e3'>",
-    "<div style='font-size:12px;font-weight:600'>Genome-wide (ddRAD-seq) ",
-    "<a href='#' title='What do these mean?' style='text-decoration:none' ",
-    "onclick=\"Shiny.setInputValue('show_genomic_about', Date.now()); return false;\">&#9432;</a></div>",
-    "<div style='color:#666;font-size:11px;margin:1px 0 4px'>Site: ", htmltools::htmlEscape(s$site), "</div>",
-    "<table style='font-size:12px;border-collapse:collapse'>",
-    row("Samples", s$n, "Individuals genotyped at this site"),
-    row("&pi;", formatC(s$pi, format = "f", digits = 3), "Nucleotide diversity"),
-    row("S", format(s$S, big.mark = ","), "Segregating (polymorphic) sites"),
-    row("Tajima&#39;s D", formatC(s$tajima_d, format = "f", digits = 2), "Compares nucleotide diversity with the number of segregating sites"),
-    "</table>",
-    "<div style='color:#888;font-size:11px;margin-top:3px'>", src, "</div></div>"
-  )
-}
-
-# ---- Genomic statistics (map sidebar) ------------------------------------------
-# WGS (per country) and ddRAD (per region) are separate tables on purpose: ddRAD
+# ---- Genomic layers (WGS / ddRAD circles) --------------------------------------
+# WGS (per country) and ddRAD (per site) stay separate layers on purpose: ddRAD
 # reads a small fraction of the genome, so its values aren't comparable to WGS.
-geno_tip <- function(key) geno$descriptors$tip[geno$descriptors$key == key]
-fmt_num  <- function(x, digits) ifelse(is.na(x), "—", formatC(x, format = "f", digits = digits))
+geno_tip   <- function(key) geno$descriptors$tip[geno$descriptors$key == key]
+fmt_num    <- function(x, digits) ifelse(is.na(x), "—", formatC(x, format = "f", digits = digits))
 split_refs <- function(x) unique(trimws(unlist(strsplit(x, ";\\s*(?=[A-Z])", perl = TRUE))))
 
-# One table; rows whose country is `selected` (normalised) are highlighted.
-# `cite` is each row's short citation, shown on hover.
-geno_table <- function(d, name_col, name_label, selected, pi_digits, cite) {
-  tags$table(
-    class = "geno-table",
-    tags$thead(tags$tr(
-      tags$th(name_label),
-      tags$th(title = "Number of mosquitoes sequenced", "n"),
-      tags$th(title = paste("Nucleotide diversity (π):", geno_tip("pi")), "π"),
-      tags$th(title = paste("Tajima's D:", geno_tip("tajima_d")), "Tajima's D"),
-      tags$th(title = paste("Weighted FST:", geno_tip("fst"), "Negative values are shown as 0."),
-              HTML("F<sub>ST</sub>"))
-    )),
-    tags$tbody(lapply(seq_len(nrow(d)), function(i) tags$tr(
-      class = if (isTRUE(norm_country(d$country[i]) == selected)) "selected",
-      title = sprintf("%s: %s site%s, %s mosquitoes. %s", d[[name_col]][i], d$sites[i],
-                      if (isTRUE(d$sites[i] == 1)) "" else "s", d$n[i], cite[i]),
-      tags$td(d[[name_col]][i]),
-      tags$td(d$n[i]),
-      tags$td(fmt_num(d$pi[i], pi_digits)),
-      tags$td(fmt_num(d$tajima_d[i], 2)),
-      tags$td(fmt_num(pmax(d$fst[i], 0), 3))   # the descriptor sheet: negative FST counts as 0
-    )))
-  )
+# One pop-up table row; the descriptor sheet's tooltip rides on `key`.
+stat_row <- function(label, value, key = "") {
+  tip <- if (key %in% geno$descriptors$key) geno_tip(key) else key   # a descriptor key, or the tooltip text itself
+  sprintf("<tr title=\"%s\"><td style='padding:1px 10px 1px 0;color:#555'>%s</td><td>%s</td></tr>",
+          htmltools::htmlEscape(tip, attribute = TRUE), label, value)
+}
+
+stat_table <- function(...) paste0("<table style='font-size:12px;border-collapse:collapse'>",
+                                   paste0(c(...), collapse = ""), "</table>")
+
+# Pop-up: place name, a subtitle, the stat tables, a source line with a link to
+# the About page's explanation of the statistics.
+geno_popup <- function(title, sub, body, src) paste0(
+  "<div style='font-family:sans-serif;min-width:170px'><b style='font-size:13px'>",
+  htmltools::htmlEscape(title), "</b>",
+  "<div style='color:#666;font-size:11px;margin:3px 0 6px'>", sub, "</div>", body,
+  "<div style='color:#888;font-size:11px;margin-top:5px'>", src,
+  " &middot; <a href='#' onclick=\"Shiny.setInputValue('show_genomic_about', Date.now()); return false;\">",
+  "What do these mean?</a></div></div>")
+
+# One circle per place: data.frame(id, lat, lon, pi, popup).
+#  ddrad: the sheet's own sites, each with its site values and its region's.
+#  wgs:   WGS is per country, so one circle per country.
+geno_points <- function(kind) {
+  if (kind == "ddrad") {
+    s   <- geno$ddrad_sites
+    reg <- geno$ddrad_regions
+    popup <- vapply(seq_len(nrow(s)), function(i) {
+      r <- if (is.null(reg)) NULL else reg[match(s$region[i], reg$region), ]
+      src <- htmltools::htmlEscape(s$short[i])
+      if (!is.na(s$doi[i])) src <- sprintf("<a href='%s' target='_blank' rel='noopener'>%s</a>", s$doi[i], src)
+      geno_popup(s$site[i], paste0("ddRAD-seq &middot; ", htmltools::htmlEscape(s$country[i])),
+        paste0(
+          stat_table(stat_row("Samples", s$n[i], "Individuals genotyped at this site"),
+                     stat_row("&pi;", fmt_num(s$pi[i], 3), "pi"),
+                     stat_row("S", format(s$S[i], big.mark = ","), "Segregating (polymorphic) sites"),
+                     stat_row("Tajima&#39;s D", fmt_num(s$tajima_d[i], 2), "tajima_d")),
+          if (!is.null(r) && !is.na(r$region)) paste0(
+            "<div style='margin-top:6px;font-size:12px;font-weight:600'>", htmltools::htmlEscape(r$region),
+            " <span style='font-weight:400;color:#666'>(", r$sites, " sites, ", r$n, " samples)</span></div>",
+            stat_table(stat_row("&pi;", fmt_num(r$pi, 3), "pi"),
+                       stat_row("Tajima&#39;s D", fmt_num(r$tajima_d, 2), "tajima_d"),
+                       stat_row("Fst", fmt_num(pmax(r$fst, 0), 3), "fst")))
+        ), src)
+    }, "")
+    return(data.frame(id = paste0("ddrad_", seq_len(nrow(s))), lat = s$lat, lon = s$lon, pi = s$pi, popup = popup))
+  }
+
+  # One circle per WGS country, on a point inside its polygon.
+  w  <- geno$wgs
+  cs <- map_layers$country_status
+  i  <- match(norm_country(w$country), norm_country(cs$admin))
+  xy <- sf::st_coordinates(suppressWarnings(sf::st_point_on_surface(sf::st_geometry(cs)[i])))
+  popup <- vapply(seq_len(nrow(w)), function(j) geno_popup(
+    w$country[j], "Whole-genome sequencing (WGS) &middot; country-wide values",
+    stat_table(stat_row("Samples", w$n[j], "Mosquitoes sequenced in this country"),
+               stat_row("Sites", w$sites[j], "Collection sites sequenced in this country"),
+               stat_row("&pi;", fmt_num(w$pi[j], 4), "pi"),
+               stat_row("Tajima&#39;s D", fmt_num(w$tajima_d[j], 2), "tajima_d"),
+               stat_row("Fst", fmt_num(pmax(w$fst[j], 0), 3), "fst")),
+    htmltools::htmlEscape(paste(split_refs(w$source[j]), collapse = "; "))), "")
+  data.frame(id = paste0("wgs_", seq_len(nrow(w))), lat = xy[, "Y"], lon = xy[, "X"], pi = w$pi, popup = popup)
+}
+
+# Circles coloured on a yellow-to-red heat scale of nucleotide diversity. Each
+# layer gets its own scale: WGS and ddRAD values are ~10x apart.
+add_pi_circles <- function(proxy, pts, digits) {
+  if (is.null(pts)) return(proxy)
+  pal <- colorNumeric("YlOrRd", domain = range(pts$pi, na.rm = TRUE))
+  proxy %>%
+    addCircleMarkers(
+      lng = pts$lon, lat = pts$lat, layerId = pts$id, group = "Genomic circles",
+      radius = 11, weight = 1.5, color = "#444", fillColor = pal(pts$pi), fillOpacity = 0.9,
+      popup = pts$popup
+    ) %>%
+    addLegend(position = "bottomleft", pal = pal, values = pts$pi, opacity = 1,
+              title = "Nucleotide<br>diversity (&pi;)", layerId = "pi_legend",
+              labFormat = labelFormat(digits = digits))
 }
 
 # Description card text for the tree and network tabs.
@@ -224,6 +240,79 @@ explainer <- function(description, how, glossary) tagList(
     tags$summary("Glossary"),
     tags$dl(class = "help-text", lapply(names(glossary), function(k)
       tagList(tags$dt(k), tags$dd(glossary[[k]]))))
+  )
+)
+
+# Descriptions of the three genomic statistics, worded for the WGS analysis
+# (shown in the map sidebar and on the Genomic Statistics page). Hover text on
+# the stats comes from the workbook's "Tool Tip" column instead.
+GENO_TEXT <- list(
+  pi = list(
+    title = "Nucleotide diversity (π)",
+    description = paste(
+      "Nucleotide diversity. This measure shows how genetically varied the mosquitoes within each",
+      "population are. The genome was divided into 10,000-letter stretches (windows). In each window,",
+      "DNA was compared between every pair of mosquitoes from the same population and the proportion",
+      "of differing letters was calculated. These values were then averaged across windows to give one",
+      "number per population."),
+    how = tags$p(paste(
+      "Higher values mean mosquitoes from that country carry more varied DNA, as you would expect from",
+      "a large or long-established population. Lower values mean the mosquitoes are more genetically",
+      "alike, which can happen when a population descends from a small number of founders, such as after",
+      "a recent introduction. Values are small numbers because most of the genome is identical between",
+      "any two mosquitoes.")),
+    glossary = c(
+      "Nucleotide" = "One letter (A, T, C, or G) in the DNA code.",
+      "Variant" = "A spot in the genome where mosquitoes differ from one another.",
+      "Nucleotide diversity (π)" = "The average proportion of DNA letters that differ between two randomly chosen mosquitoes from the same group.",
+      "Founder effect" = "Reduced variation in a new population started by a small number of individuals.")
+  ),
+
+  tajima_d = list(
+    title = "Tajima's D",
+    description = paste(
+      "Tajima's D. This statistic compares two ways of measuring genetic variation to reveal clues about",
+      "a population's recent history. It was calculated in 10,000-letter windows and averaged across the",
+      "genome for each population. Populations with fewer samples give less stable values, so sample",
+      "sizes are shown alongside."),
+    how = tagList(
+      tags$ul(
+        tags$li(tags$b("Near zero:"), " the population looks stable, with a normal balance of common and rare variants."),
+        tags$li(tags$b("Positive:"), " rare variants are scarce. This can follow a population crash (bottleneck) or the mixing of genetically distinct groups."),
+        tags$li(tags$b("Negative:"), " rare variants are abundant. This can follow a recent expansion, when a population grows quickly and new variants appear.")
+      ),
+      tags$p("These are clues about history, not proof. Sampling choices and other forces can push the value up or down.")
+    ),
+    glossary = c(
+      "Rare variant" = "A DNA difference found in only one or a few mosquitoes in a given population.",
+      "Bottleneck" = "A sharp drop in population size that removes genetic variation.",
+      "Population expansion" = "Rapid growth of a population, often after reaching new territory.",
+      "Tajima's D" = "A test that compares the number of variable sites with the average pairwise difference. The gap between them signals whether the population recently shrank or grew.",
+      "Window" = "A fixed-length stretch of the genome (here 10,000 or 100,000 letters) analyzed as a unit so patterns can be compared along the chromosome.")
+  ),
+
+  fst = list(
+    title = "Fst",
+    description = paste(
+      "Fst. This value shows how genetically distinct two groups of mosquitoes are. Each country's",
+      "mosquitoes were divided into two groups based on geography, except for Djibouti, where all",
+      "collections came from Djibouti City and were therefore divided randomly into two groups. Fst was",
+      "calculated across the whole genome, and plots show the same comparison in 100,000-letter windows."),
+    how = tags$p(
+      "Values run from 0 to 1. Values near 0 mean the two groups are essentially one interbreeding
+      population, with mosquitoes moving freely between them. Higher values mean the groups have drifted
+      apart, which suggests limited mixing, for example because of distance or barriers. Random splits
+      are expected to give values near 0, so they act as a baseline for comparison. Negative values
+      should be interpreted as 0. These values compare two groups of mosquitoes from within the same
+      country, so they only measure local structure. They should not be read as a measure of how
+      different ", tags$em("An. stephensi"), " populations are overall, since the comparison here
+      evaluates within-country differences."),
+    glossary = c(
+      "Population structure" = "Genetic differences that divide a species into partly separate groups.",
+      "Gene flow" = "The movement and mixing of genes between groups when individuals breed across them.",
+      "Fst" = "The share of total genetic variation that is explained by differences between groups rather than within them.",
+      "Weighted Fst" = "A genome-wide value that combines all variants by adding up their evidence, so informative sites count for more than uninformative ones.",
+      "Window" = "A fixed-length stretch of the genome (here 10,000 or 100,000 letters) analyzed as a unit so patterns can be compared along the chromosome.")
   )
 )
 
@@ -305,7 +394,6 @@ add_pie_markers <- function(map, data, color_palette,
       total, " sample", if (total != 1) "s" else "", "</div>",
       "<table style='font-size:12px;border-collapse:collapse'>",
       rows_html, "</table>",
-      ddrad_popup(coords[[lat_col]][i], coords[[lon_col]][i], df_pie$country[i]),
       "</div>"
     )
   }
@@ -539,61 +627,65 @@ ui <- page_navbar(
       fillable = FALSE,
 
       sidebar = sidebar(
-        width = 330,   # fits the genomic tables' five columns
+        width = 280,
         open  = TRUE,
 
-        tags$div(class = "sidebar-section-header", "Temporal Filter"),
-
-        radioButtons(
-          "time_mode", label = NULL,
-          choices  = c("Exact Year"   = "exact",
-                       "Up to Year"   = "cumulative",
-                       "Year Range"   = "range",
-                       "All Years"    = "all"),
-          selected = "all"
-        ),
-
         conditionalPanel(
-          condition = "input.time_mode === 'exact' || input.time_mode === 'cumulative'",
-          sliderInput(
-            "year_filter", "Year:",
-            min     = 1990,
-            max     = 2024,
-            value   = 2024,
-            step    = 1,
-            sep     = "",
-            animate = animationOptions(interval = 1000, loop = FALSE)
-          )
-        ),
+          condition = "!input.map_data || input.map_data === 'haplotype'",
+          tags$div(class = "sidebar-section-header", "Temporal Filter"),
 
-        conditionalPanel(
-          condition = "input.time_mode === 'range'",
-          sliderInput(
-            "year_range", "Year range:",
-            min   = 1990,
-            max   = 2024,
-            value = c(2016, 2024),
-            step  = 1,
-            sep   = ""
-          )
-        ),
+          radioButtons(
+            "time_mode", label = NULL,
+            choices  = c("Exact Year"   = "exact",
+                         "Up to Year"   = "cumulative",
+                         "Year Range"   = "range",
+                         "All Years"    = "all"),
+            selected = "all"
+          ),
 
-        hr(class = "sidebar-divider"),
-        tags$div(class = "sidebar-section-header", "Summary"),
-        uiOutput("sample_count_ui"),
-        uiOutput("no_data_warning"),
+          conditionalPanel(
+            condition = "input.time_mode === 'exact' || input.time_mode === 'cumulative'",
+            sliderInput(
+              "year_filter", "Year:",
+              min     = 1990,
+              max     = 2024,
+              value   = 2024,
+              step    = 1,
+              sep     = "",
+              animate = animationOptions(interval = 1000, loop = FALSE)
+            )
+          ),
 
-        if (!is.null(geno)) tagList(
+          conditionalPanel(
+            condition = "input.time_mode === 'range'",
+            sliderInput(
+              "year_range", "Year range:",
+              min   = 1990,
+              max   = 2024,
+              value = c(2016, 2024),
+              step  = 1,
+              sep   = ""
+            )
+          ),
+
           hr(class = "sidebar-divider"),
+          tags$div(class = "sidebar-section-header", "Summary"),
+          uiOutput("sample_count_ui"),
+          uiOutput("no_data_warning")
+        ),
+
+        if (!is.null(geno)) conditionalPanel(
+          condition = "input.map_data === 'wgs' || input.map_data === 'ddrad'",
           tags$div(class = "sidebar-section-header", "Genomic statistics"),
-          tags$p(class = "geno-hint", "Click a pie chart to highlight its country. Hover over a heading for its meaning."),
-          uiOutput("genomic_ui"),
+          uiOutput("genomic_info"),
           tags$details(
             class = "geno-key",
             tags$summary("How to read these statistics"),
-            tags$p(geno$reading),
-            lapply(seq_len(nrow(geno$descriptors)), function(i)
-              tags$p(tags$b(paste0(geno$descriptors$label[i], ": ")), geno$descriptors$info[i])),
+            lapply(GENO_TEXT, function(g) tags$details(
+              class = "geno-stat",
+              tags$summary(g$title),
+              explainer(g$description, g$how, g$glossary)
+            )),
             tags$p(tags$a(href = "#", onclick = "Shiny.setInputValue('show_genomic_about', Date.now()); return false;",
                           "Sources and more: About › Genomic Statistics"))
           )
@@ -603,6 +695,12 @@ ui <- page_navbar(
       card(
         full_screen = TRUE,
         class       = "map-card",
+        if (!is.null(geno)) card_header(
+          class = "map-data-header",
+          tags$label(`for` = "map_data", "Show on map"),
+          selectInput("map_data", NULL, selectize = FALSE, width = "130px",
+                      choices = c("Haplotype" = "haplotype", "WGS" = "wgs", "ddRAD" = "ddrad"))
+        ),
         withSpinner(
           leafletOutput("map", height = "780px"),
           color = "#1a4f72"
@@ -795,7 +893,7 @@ ui <- page_navbar(
       )
     ),
 
-    # Opened by the (i) in a ddRAD pop-up and the link under the sidebar tables.
+    # Opened by the "What do these mean?" link in a genomic pop-up and the one in the sidebar.
     nav_panel(
       "Genomic Statistics",
       value = "genomics_tab",
@@ -808,24 +906,29 @@ ui <- page_navbar(
             " and rerun ", tags$code("Rscript Tools/build_app_cache.R"), "."
           ) else tagList(
             tags$p(paste0(
-              "The map sidebar lists genome-wide statistics from two kinds of sequencing, kept ",
-              "apart because their values can't be compared: whole-genome sequencing (WGS), per ",
-              "country, and double-digest restriction-site-associated DNA sequencing (ddRAD), per ",
-              "region. ", geno$ddrad_note, " Clicking a pie chart highlights its country, and the ",
-              "pop-ups of pie charts at the ", nrow(ddrad), " ddRAD collection sites in ",
-              paste(sort(unique(ddrad$country)), collapse = ", "), " also show that site's values. ",
+              "Use the ", "Show on map", " menu above the map to switch from haplotype pie ",
+              "charts to genome-wide nucleotide diversity (π), drawn as circles on a yellow-to-red ",
+              "scale. Click a circle for the other statistics. The two kinds of sequencing are kept ",
+              "apart because their values can't be compared. Whole-genome sequencing (WGS) is ",
+              "summarized per country, so it appears as one circle per country. Double-digest restriction-site-associated DNA sequencing (ddRAD) is ",
+              "reported per site, with the site's region alongside, for ", nrow(ddrad), " sites in ",
+              paste(sort(unique(ddrad$country)), collapse = ", "), ". ", geno$ddrad_note, " ",
               "These come from the published studies below, not from the COI data, and don't ",
               "change with the year filter."
             )),
             tags$h5("How to read these statistics"),
-            tags$p(geno$reading),
+            lapply(GENO_TEXT, function(g) tagList(tags$h6(class = "geno-stat-title", g$title),
+                                                  explainer(g$description, g$how, g$glossary))),
+            tags$p(
+              "These descriptions are written for the WGS analysis. ddRAD reports the same ",
+              "statistics from a much smaller part of the genome, so its values aren't comparable ",
+              "to WGS. Two more numbers appear in the ddRAD pop-ups:"
+            ),
             tags$ul(
-              lapply(seq_len(nrow(geno$descriptors)), function(i)
-                tags$li(tags$b(paste0(geno$descriptors$label[i], ": ")), geno$descriptors$info[i])),
-              tags$li(tags$b("S (segregating sites, ddRAD pop-ups only): "),
+              tags$li(tags$b("S (segregating sites): "),
                       "the number of variable DNA positions found at the site. S rises with the
                       number of mosquitoes sequenced, so compare sites with similar sample sizes."),
-              tags$li(tags$b("n / Samples: "), "the number of mosquitoes sequenced.")
+              tags$li(tags$b("Samples: "), "the number of mosquitoes sequenced.")
             ),
             tags$h5("Sources"),
             tags$ul(
@@ -911,9 +1014,14 @@ server <- function(input, output, session) {
     create_base_map() %>% add_country_status_layer()
   })
 
-  observeEvent(gene(), {
+  # "Show on map": haplotype pies (default), or WGS / ddRAD circles coloured by pi.
+  map_kind <- reactive(if (is.null(input$map_data)) "haplotype" else input$map_data)
+
+  observe({
+    proxy <- leafletProxy("map") %>% removeControl("haplotype_legend")
+    if (map_kind() != "haplotype") return()
     pal <- gene()$palette
-    leafletProxy("map") %>%
+    proxy %>%
       addLegend(
         position = "bottomleft",
         colors   = unname(pal),
@@ -942,10 +1050,21 @@ server <- function(input, output, session) {
 
   # Pie charts follow the gene and the temporal filter.
   observe({
+    kind  <- map_kind()
     fd    <- filtered_data()
     proxy <- leafletProxy("map") %>% clearMinicharts() %>% clearMarkers()
-    if (nrow(fd) > 0) {
+    if (kind == "haplotype" && nrow(fd) > 0) {
       add_pie_markers(proxy, fd, color_palette = gene()$palette, radius = 30)
+    }
+  })
+
+  # WGS / ddRAD circles follow neither the gene nor the temporal filter: the
+  # genomic statistics come from their own workbook and aren't split by year.
+  observe({
+    kind  <- map_kind()
+    proxy <- leafletProxy("map") %>% clearGroup("Genomic circles") %>% removeControl("pi_legend")
+    if (kind != "haplotype" && !is.null(geno)) {
+      add_pi_circles(proxy, geno_points(kind), digits = if (kind == "wgs") 4 else 3)
     }
   })
 
@@ -957,31 +1076,19 @@ server <- function(input, output, session) {
     if (!is.na(country)) selected_location(unname(country))
   })
 
-  # WGS and ddRAD boxes; the clicked pie's country is highlighted.
-  output$genomic_ui <- renderUI({
-    loc <- selected_location()
-    sel <- if (is.null(loc)) "" else norm_country(loc)
-    reg <- geno$ddrad_regions
-    tagList(
-      tags$div(
-        class = "geno-box",
-        tags$div(class = "geno-title", "WGS data", tags$span("whole genome, per country")),
-        geno_table(geno$wgs, "country", "Country", sel, 4, geno$wgs$source),
-        tags$div(class = "geno-src", "Sources: ", paste(split_refs(geno$wgs$source), collapse = "; "))
-      ),
-      if (!is.null(reg)) tags$div(
-        class = "geno-box",
-        tags$div(class = "geno-title", "ddRAD data", tags$span("reduced representation, per region")),
-        tags$p(class = "geno-note", geno$ddrad_note),
-        geno_table(reg, "region", "Region", sel, 3, reg$short),
-        tags$div(class = "geno-src",
-                 "Per-site values: click a pie in ", paste(sort(unique(ddrad$country)), collapse = ", "),
-                 ". Sources: ", paste(split_refs(c(reg$short, ddrad$short)), collapse = "; "))
-      )
-    )
+  # Sidebar blurb for the selected genomic layer.
+  output$genomic_info <- renderUI({
+    switch(map_kind(),
+      wgs = tags$p(class = "geno-hint",
+        "Whole-genome data, summarized per country: one circle per sequenced country. ",
+        "Click a circle for all of its statistics."),
+      ddrad = tags$p(class = "geno-hint",
+        "Reduced-representation data, one circle per ddRAD site. Click a circle for the ",
+        "site's statistics and its region's. ", geno$ddrad_note),
+      NULL)
   })
 
-  # The (i) in a pop-up's ddRAD block opens the Genomic Statistics page.
+  # The link in a genomic pop-up opens the Genomic Statistics page.
   observeEvent(input$show_genomic_about, {
     nav_select("main_nav", "genomics_tab")
     session$sendCustomMessage("scroll_to", "genomics-top")

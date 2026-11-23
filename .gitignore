@@ -12,4 +12,9 @@ rsconnect/
 
 # Manuscript files
 manuscript/
-/new_features
+
+# Dev files
+new_features/
+
+# Output of Scripts/Hapdiversitycalculation.R
+via_sensitivity_output/

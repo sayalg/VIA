@@ -128,9 +128,9 @@ read_gene <- function(dir) {
   # "City.Town", "Native.Invasive", so either style can be dropped in.
   names(md) <- make.names(headers)
 
-  # The gene's own marker is the column named after the gene — "P47Rec Genotype"
-  # in folder P47rec — or failing that a plain "Haplotype" column (the original
-  # COI file). Other genes' columns, like "COI Haplotype", are left alone.
+  # The gene's own marker is the column named after the gene — "COI" in folder
+  # COI, "P47Rec Genotype" in folder P47rec — or failing that a plain "Haplotype"
+  # column. Other genes' columns, like "COI Haplotype", are left alone.
   hit <- which(startsWith(tolower(names(md)), tolower(make.names(gene))))
   if (length(hit) > 1) {
     stop(sprintf("[%s] more than one column starts with '%s' (%s). Only the genotype column should.",
@@ -142,7 +142,8 @@ read_gene <- function(dir) {
                  gene, gene), call. = FALSE)
   }
   marker <- names(md)[hit]
-  label  <- if (marker == "Haplotype") "Haplotypes" else headers[hit]
+  # Legend title: a column named just after the gene (COI) is its haplotypes.
+  label  <- if (marker == "Haplotype" || tolower(marker) == tolower(make.names(gene))) "Haplotypes" else headers[hit]
   if (marker != "Haplotype") {
     md$Haplotype <- NULL
     names(md)[names(md) == marker] <- "Haplotype"
@@ -602,6 +603,19 @@ if (file.exists(GENOMICS_XLSX)) {
     if (anyNA(regions$country)) warning(GENOMICS_XLSX, ", sheet ddRAD: no country found in region(s) ",
                                         paste(regions$region[is.na(regions$country)], collapse = ", "), call. = FALSE)
     regions$short <- short_cite(regions$source)
+
+    # Which region each site belongs to: the sheet doesn't say, but regions list
+    # their site count in order, so a country's sites split in sheet order. The
+    # sample sizes must then add up to the region's n, or the split is wrong.
+    ddrad$region <- NA_character_
+    for (i in seq_len(nrow(regions))) {
+      free <- which(ddrad$country == regions$country[i] & is.na(ddrad$region))
+      take <- head(free, regions$sites[i])
+      if (length(take) == regions$sites[i] && sum(ddrad$n[take]) == regions$n[i]) {
+        ddrad$region[take] <- regions$region[i]
+      } else warning(GENOMICS_XLSX, ", sheet ddRAD: sites of ", regions$region[i],
+                     " don't add up to its sample size; their pop-ups omit the regional values", call. = FALSE)
+    }
   }
 
   genomics <- list(descriptors = descriptors, reading = reading, wgs = wgs,

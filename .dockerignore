@@ -1,0 +1,11 @@
+# The build context is the repository root, but the image only needs Dashboard/.
+*
+!Dashboard
+
+# ...minus what isn't part of the running app (same list as Dashboard/.rscignore)
+Dashboard/.Rhistory
+Dashboard/.Rprofile.local
+Dashboard/.Rproj.user
+Dashboard/rsconnect
+Dashboard/StrainHub_metrics.csv
+Dashboard/manifest.json

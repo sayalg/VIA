@@ -421,90 +421,13 @@ table.dataTable.table-striped tbody tr:nth-child(odd) {
 }
 
 /* ============================================================
-   GENOMIC STATISTICS (map sidebar)
+   GENOMIC STATISTICS (WGS / ddRAD map layers)
    ============================================================ */
 
 .geno-hint {
   font-size: 0.72rem;
   color: #64748b;
   margin-bottom: 0.5rem;
-}
-
-.geno-box {
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  padding: 0.5rem 0.4rem 0.45rem;
-  margin-bottom: 0.6rem;
-}
-
-.geno-title {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: #154734;
-  margin-bottom: 0.3rem;
-}
-
-.geno-title span {
-  font-weight: 400;
-  color: #64748b;
-  font-size: 0.68rem;
-  margin-left: 0.35rem;
-}
-
-.geno-note {
-  font-size: 0.68rem;
-  color: #64748b;
-  line-height: 1.35;
-  margin-bottom: 0.35rem;
-}
-
-.geno-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.7rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.geno-table th {
-  font-weight: 600;
-  color: #475569;
-  border-bottom: 1px solid #e2e8f0;
-  padding: 2px 3px;
-  text-align: right;
-  white-space: nowrap;
-  cursor: help;
-  text-decoration: underline dotted #94a3b8;
-  text-underline-offset: 2px;
-}
-
-.geno-table td {
-  padding: 1px 3px;
-  text-align: right;
-  white-space: nowrap;
-}
-
-.geno-table th:first-child,
-.geno-table td:first-child {
-  text-align: left;
-  padding-left: 2px;
-}
-
-.geno-table th:first-child {
-  cursor: default;
-  text-decoration: none;
-}
-
-.geno-table tr.selected td {
-  background: #fff4e6;
-  color: #7a5200;
-  font-weight: 600;
-}
-
-.geno-src {
-  font-size: 0.64rem;
-  color: #94a3b8;
-  margin-top: 0.3rem;
-  line-height: 1.35;
 }
 
 .geno-key {
@@ -609,4 +532,51 @@ table.dataTable.table-striped tbody tr:nth-child(odd) {
 
 .tree-zoom-btns button:hover {
   background: #f1f5f9;
+}
+
+/* "Show on map" selector in the map card's header */
+.map-data-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.75rem;
+}
+
+.map-data-header label {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #154734;
+}
+
+.map-data-header .form-group,
+.map-data-header select {
+  margin-bottom: 0;
+}
+
+.map-data-header select {
+  font-size: 0.8rem;
+}
+
+/* One statistic's description inside the sidebar's "How to read" panel */
+.geno-stat {
+  margin: 0.4rem 0 0 0.6rem;
+}
+
+.geno-stat summary {
+  font-weight: 600;
+  color: #475569;
+}
+
+.geno-stat-title {
+  margin-top: 1.4rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #154734;
+}
+
+/* On the About pages the descriptions read at body size, not the cards' small print */
+.about-card .help-text {
+  font-size: inherit;
+  color: inherit;
 }
