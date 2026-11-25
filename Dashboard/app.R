@@ -111,6 +111,14 @@ add_base_tiles <- function(map) {
 # dependency to the initial widget loads it with the page instead.
 minichart_deps <- utils::getFromNamespace("minichartDeps", "leaflet.minicharts")
 
+# Where the map first opens: the extent of every gene's collection sites, so it
+# starts zoomed in on the data rather than on the whole world (where the
+# continents repeat at the sides).
+map_extent <- local({
+  xy <- do.call(rbind, lapply(genes, function(g) g$haplo[, c("Latitude", "Longitude")]))
+  list(lng = range(xy$Longitude, na.rm = TRUE), lat = range(xy$Latitude, na.rm = TRUE))
+})
+
 create_base_map <- function(tile_size = 256) {
   m <- leaflet(options = leafletOptions(maxZoom = MAP_MAX_ZOOM)) %>%
     # Below the default overlay pane (400) that the pie charts draw in, so no
@@ -137,7 +145,9 @@ create_base_map <- function(tile_size = 256) {
     ) %>%
     # Railways start visible but are pushed in by the server once the map has
     # rendered; Shipping starts hidden and is only sent if ticked.
-    hideGroup("Shipping Routes")
+    hideGroup("Shipping Routes") %>%
+    fitBounds(map_extent$lng[1], map_extent$lat[1], map_extent$lng[2], map_extent$lat[2],
+              options = list(padding = c(20, 20)))
 
   m$dependencies <- c(m$dependencies, minichart_deps())
   m
@@ -218,16 +228,21 @@ geno_points <- function(kind) {
 # layer gets its own scale: WGS and ddRAD values are ~10x apart.
 add_pi_circles <- function(proxy, pts, digits) {
   if (is.null(pts)) return(proxy)
-  pal <- colorNumeric("YlOrRd", domain = range(pts$pi, na.rm = TRUE))
+  rng <- range(pts$pi, na.rm = TRUE)
+  pal <- colorNumeric("YlOrRd", domain = rng)   # light = low diversity, dark = high
+  # Legend only: a reversed bar with descending labels puts the highest value
+  # (darkest) at the top. Each circle's colour comes from `pal`, unchanged.
+  pal_legend <- colorNumeric("YlOrRd", domain = rng, reverse = TRUE)
   proxy %>%
     addCircleMarkers(
       lng = pts$lon, lat = pts$lat, layerId = pts$id, group = "Genomic circles",
       radius = 11, weight = 1.5, color = "#444", fillColor = pal(pts$pi), fillOpacity = 0.9,
       popup = pts$popup
     ) %>%
-    addLegend(position = "bottomleft", pal = pal, values = pts$pi, opacity = 1,
+    addLegend(position = "bottomleft", pal = pal_legend, values = pts$pi, opacity = 1,
               title = "Nucleotide<br>diversity (&pi;)", layerId = "pi_legend",
-              labFormat = labelFormat(digits = digits))
+              labFormat = labelFormat(digits = digits,
+                                      transform = function(x) sort(x, decreasing = TRUE)))
 }
 
 # Description card text for the tree and network tabs.
@@ -585,12 +600,13 @@ ui <- page_navbar(
   # One entry per folder in Input_Files/genes/, after Tools/build_app_cache.R.
   nav_item(
     tags$div(
-      style = "padding: 6px 10px;",
+      class = "gene-select",
+      tags$label(`for` = "selected_gene", "Genetic Diversity"),
       selectInput(
         "selected_gene",
         label    = NULL,
         choices  = names(genes),
-        selected = names(genes)[1],
+        selected = if ("COI" %in% names(genes)) "COI" else names(genes)[1],
         width    = "120px"
       )
     )
@@ -605,11 +621,24 @@ ui <- page_navbar(
       class = "map-banner",
       tags$h2("Mapping the invasion of ", tags$em("Anopheles stephensi")),
       tags$p(
-        "An urban malaria vector native to South Asia and the Arabian Peninsula, ",
-        tags$em("An. stephensi"), " has spread across the Horn of Africa and beyond ",
-        "since 2012. This atlas brings together COI mitochondrial haplotypes from ",
-        "field collections to show where each lineage has been found, and which ",
-        "populations are genetically connected."
+        "VIA is an interactive platform designed to support the investigation of mosquito ",
+        "vector invasions through the visualization of geographic, genetic, and genomic data."
+      ),
+      tags$p(HTML(paste0(
+        "The current focus is <em>Anopheles stephensi</em>, an urban malaria vector native ",
+        "to South Asia and the Arabian Peninsula that has expanded its range into the Horn of ",
+        "Africa. VIA integrates mitochondrial haplotype data, population genomic statistics, and ",
+        "multiple analytical approaches for investigating genetic connectivity among populations, ",
+        "drawing on previously published studies and publicly available databases."
+      ))),
+      tags$p(
+        "Patterns of genetic diversity and connectivity are presented within the geographic and ",
+        "demographic context of mosquito collection sites to facilitate the exploration of ",
+        "invasion history and population dynamics."
+      ),
+      tags$p(
+        "By integrating these data, VIA aims to support research, vector surveillance, and the ",
+        "development of evidence-based strategies for responding to mosquito vector invasions."
       ),
       tags$div(
         class = "banner-hint",
@@ -766,9 +795,9 @@ ui <- page_navbar(
     )
   ),
 
-  # ---- Tab 3: Gene Network ----------------------------------------------------
+  # ---- Tab 3: Dispersal Network ----------------------------------------------------
   nav_panel(
-    title = tags$span(icon("circle-nodes"), "Gene Network"),
+    title = tags$span(icon("circle-nodes"), "Dispersal Network"),
     value = "network_tab",
 
     layout_columns(
@@ -829,18 +858,60 @@ ui <- page_navbar(
           color = "#1a4f72"
         )
       )
-    ),
+    )
+  ),
+
+  # ---- Tab 4: Haplotype Network -----------------------------------------------
+  nav_panel(
+    title = tags$span(icon("share-nodes"), "Haplotype Network"),
+    value = "haplo_tab",
 
     layout_columns(
       col_widths = c(3, 9),
 
       card(
-        hr(class = "sidebar-divider"),
-        tags$p(class = "help-text",
-               style = "padding: 72px; font-size: 16px; margin: 8px 0;",
-               icon("circle-info"),
-               " Node size reflects number of included samples (capped at 20 per country/year). Edge thickness reflects the number of shared unique haplotypes between countries.",
-               " Countries with more samples have more chances to detect shared haplotypes, so thin sampling can hide links.")
+        card_header(tags$span(icon("circle-info"), " About this Network")),
+        class = "controls-card",
+        explainer(
+          paste(
+            "This network shows which countries share COI haplotypes. Each circle is a country,",
+            "and a line joins two countries that share at least one haplotype. The picture is one",
+            "random draw of up to 20 sequences per country and year, so heavily sampled places",
+            "don't dominate. To see which links hold up, the draw was repeated 1,000 times."
+          ),
+          tagList(
+            tags$ul(
+              tags$li(tags$b("Circles: "), "one per country. Bigger circles had more sequences in the
+                      drawn subsample; the number is in the label (n)."),
+              tags$li(tags$b("Lines: "), "two countries share a haplotype. Thicker lines mean more
+                      shared haplotypes. Hover over a line for the count, its median across subsamples,
+                      and how often it reappeared."),
+              tags$li(tags$b("Solid grey lines: "), "stable links, found in at least 95% of the
+                      repeated subsamples."),
+              tags$li(tags$b("Dashed red lines: "), "less stable links, found in fewer than 95% of
+                      the repeated subsamples. They may depend on which sequences happened to be
+                      drawn, so read them with more caution."),
+              tags$li(tags$b("No line: "), "no shared haplotype in the drawn subsample. It does not
+                      prove none exists: countries with few samples have fewer chances to show
+                      links.")
+            ),
+            tags$p("A shared haplotype means the same COI sequence was found in both countries. It
+                   does not show which way mosquitoes moved. Click a circle, or use the menu at the
+                   top left of the network, to highlight a country and its links.")
+          ),
+          list(
+            "Haplotype" = "A distinct version of the COI sequence. Mosquitoes with identical COI
+              sequences share a haplotype.",
+            "Node" = "A country in the dataset.",
+            "Edge" = "A line between two countries that share at least one haplotype.",
+            "Subsample" = "A random draw of up to 20 sequences per country and year, used so that
+              heavily sampled places don't dominate the network.",
+            "Edge stability" = "The share of the 1,000 repeated subsamples in which a link
+              appeared again. Links under 95% are drawn dashed and red.",
+            "COI" = "A mitochondrial gene inherited from the mother, so this network traces maternal
+              lineages only."
+          )
+        )
       ),
 
       card(
@@ -854,7 +925,7 @@ ui <- page_navbar(
     )
   ),
 
-  # ---- Tab 4: Literature (PubMed module) --------------------------------------
+  # ---- Tab 5: Literature (PubMed module) --------------------------------------
   nav_panel(
     title = tags$span(icon("book-open"), "Literature"),
     value = "lit_tab",
@@ -1182,7 +1253,7 @@ server <- function(input, output, session) {
   })
 
   # ==============================================================================
-  # TAB 3 — NETWORKS (both precomputed by Tools/build_app_cache.R)
+  # TABS 3 AND 4 — NETWORKS (both precomputed by Tools/build_app_cache.R)
   # ==============================================================================
 
   output$haplo_network <- renderVisNetwork({
@@ -1200,7 +1271,10 @@ server <- function(input, output, session) {
 
   output$country_network <- renderVisNetwork({
     net <- gene()$country_net
-    w <- visNetwork(net$nodes, net$links, main = "Country haplotype-sharing network (COI)")
+    w <- visNetwork(net$nodes, net$links, main = "Country haplotype-sharing network (COI)",
+                    submain = paste0("Edges show shared haplotypes in one random subsample; ",
+                                     "dashed red edges appeared in fewer than ", 100 * net$stable_cut,
+                                     "% of ", net$n_iter, " subsamples"))
 
     # Node x/y were computed by visIgraphLayout() at build time. These are the
     # remaining settings visIgraphLayout() applies: the igraphlayout flag makes
@@ -1208,11 +1282,18 @@ server <- function(input, output, session) {
     # the layout holds. Keeps igraph off the server.
     w$x$igraphlayout <- list(type = "square")
 
+    legend_edges <- data.frame(
+      label  = c(paste0("Stable (>= ", 100 * net$stable_cut, "%)"),
+                 paste0("Less stable (< ", 100 * net$stable_cut, "%)")),
+      color  = c("rgba(100,100,100,0.6)", "rgba(200,60,40,0.9)"),
+      dashes = c(FALSE, TRUE),
+      stringsAsFactors = FALSE
+    )
+
     w %>%
       visNodes(physics = FALSE) %>%
-      visLayout(randomSeed = 1) %>%
       visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE) %>%
-      visEdges(color = "rgba(100, 100, 100, 0.4)", smooth = TRUE) %>%
+      visEdges(smooth = TRUE) %>%
       visGroups(groupname = "Afghanistan",          color = "#CD9B1D") %>%
       visGroups(groupname = "Djibouti",             color = "#00008B") %>%
       visGroups(groupname = "Ethiopia",             color = "#009ACD") %>%
@@ -1222,17 +1303,19 @@ server <- function(input, output, session) {
       visGroups(groupname = "Niger",                color = "#7CCD7C") %>%
       visGroups(groupname = "Pakistan",             color = "#EEDC82") %>%
       visGroups(groupname = "SaudiArabia",          color = "#556B2F") %>%
+      visGroups(groupname = "Saudi Arabia",         color = "#556B2F") %>%
       visGroups(groupname = "Somalia",              color = "#BCD2EE") %>%
       visGroups(groupname = "Sri Lanka",            color = "#BFEFFF") %>%
       visGroups(groupname = "Sudan",                color = "#1874CD") %>%
       visGroups(groupname = "United Arab Emirates", color = "#FF7F00") %>%
       visGroups(groupname = "Yemen",                color = "#4169E1") %>%
-      visPhysics(solver = "repulsion", repulsion = list(nodeDistance = 300),
-                 stabilization = FALSE)
+      visPhysics(solver = "forceAtlas2Based", stabilization = TRUE) %>%
+      visLegend(addEdges = legend_edges, useGroups = FALSE, addNodes = NULL,
+                main = "Edge stability", zoom = FALSE)
   })
 
   # ==============================================================================
-  # TAB 4 — LITERATURE (PubMed module)
+  # TAB 5 — LITERATURE (PubMed module)
   # ==============================================================================
 
   pubBrowserServer("pubs")

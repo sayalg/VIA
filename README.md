@@ -2,6 +2,8 @@
 
 An interactive R Shiny dashboard showing *Anopheles stephensi* haplotype distribution on a map (pie chart per collection site), phylogenetic trees, phylogeographic dispersal and haplotype-sharing networks, and a live hub of *An. stephensi* literature.
 
+Web portal to VIA can be found here: https://carterlab-via.share.connect.posit.cloud/
+
 ---
 
 ## Updating the data, or adding a gene
@@ -64,7 +66,7 @@ These produce the build's inputs, need their own tools, and only need rerunning 
 
 - **Alignment and variant calling** — `Scripts/*.sh` (MAFFT etc.).
 - **WGS population statistics** — `Scripts/Genomic_population_statistics.sh` (vcftools on a PBS cluster).
-- **Haplotype diversity and sampling sensitivity** — `Scripts/Hapdiversitycalculation.R` (run from the repository root; reads `Input_Files/genes/COI/metadata.csv`, writes CSVs to `via_sensitivity_output/`: Hd per country, edge recovery across subsamples, rarefied Hd).
+- **Haplotype diversity and sampling sensitivity** — `Scripts/Hapdiversitycalculation.R` (run from the repository root; reads `Input_Files/genes/COI/metadata.csv`, writes to `via_sensitivity_output/`: CSVs of Hd per country, edge recovery across subsamples and rarefied Hd, plus the country haplotype-sharing network as an interactive HTML page with edge stability — dashed red edges appeared in fewer than 95% of 1,000 subsamples). Needs the `visNetwork` and `igraph` packages, and pandoc to save the HTML (RStudio includes it).
 - **RAxML** to produce `tree.newick`, and **iTOL** to draw `tree.svg`.
 - **Railway and shipping extracts** — `Railway_Extraction/` and `Shipping_Extraction/` produce `Input_Files/*_raw.rds` (slow: Geofabrik downloads, the 40 MB UNCTAD table, Python `searoute`).
 
@@ -139,29 +141,6 @@ Or open `Dashboard/app.R` in RStudio and click **Run App**.
 
 VIA is hosted on [Posit Connect Cloud](https://connect.posit.cloud), which publishes straight from this GitHub repository. Connect Cloud replaces shinyapps.io. It reads `Dashboard/manifest.json` to know which R version and packages to install, and serves everything in `Dashboard/` (minus what `Dashboard/.rscignore` lists).
 
-### One-time setup (already done unless you are moving accounts)
-
-1. Sign in to <https://connect.posit.cloud> with the **lab's shared account**, not a personal one, so the next student can take over by getting that login. Signing in with the GitHub account that owns this repository is simplest.
-2. When Connect Cloud asks, let its GitHub app see this repository.
-3. Click **Publish** → **Shiny**, then choose:
-   - repository: this one (`sayalg/VIA`), branch `main`
-   - primary file: **`Dashboard/app.R`**
-4. Turn on **Automatically publish on push**, so every push to `main` republishes the app.
-5. Optional: under the content's **Variables**, add `CARTO_API_KEY` (see *Basemap tiles* below).
-6. Make sure the content's access is set to **public**, then use its URL everywhere the dashboard is linked (manuscript, About page, this README).
-
-### Updating the live dashboard
-
-| You changed… | Do this, then commit and push |
-|---|---|
-| Data in `Input_Files/` | `Rscript Tools/build_app_cache.R`, and commit `Dashboard/data/` and `Dashboard/www/genes/` |
-| App code only (`app.R`, `pubmed_module.R`, `www/styles.css`) | nothing extra |
-| Added a `library()` to the app, or updated R packages | `rsconnect::writeManifest("Dashboard", appPrimaryDoc = "app.R")` and commit `Dashboard/manifest.json` |
-
-Nothing goes live until it's pushed to `main`. If a publish fails, open the content in Connect Cloud and read its **Logs**: a missing package almost always means `manifest.json` is out of date.
-
-On the free plan the app sleeps when nobody is using it, so the first visitor after a quiet spell waits a little while it starts.
-
 ### Run it in a container (Docker)
 
 The `Dockerfile` at the repository root packages the dashboard with R 4.5.2 and the packages it needs, so it runs the same on any machine with Docker:
@@ -179,22 +158,10 @@ Copy `Dashboard/` to a Shiny Server app folder (e.g. `/srv/shiny-server/vector-i
 
 Wherever it runs, the server needs outbound internet for PubMed and map tiles.
 
-### Basemap tiles
-
-CARTO now requires an API key for their raster basemap tiles, and serves tiles stamped *"requires an API key"* without one. The app works either way:
-
-| `CARTO_API_KEY` | Base layer | Zoom |
-|---|---|---|
-| unset (default) | Esri Light Gray Canvas — no key needed | native to 16, upscaled to 19 |
-| set | CartoDB Positron | native to 20 |
-
-A key is free at <https://carto.com/basemaps/apikey>. On Connect Cloud, add it as a `CARTO_API_KEY` variable in the content's settings rather than writing it into `app.R`, so it stays out of the repository.
-
----
-
 ## Using the App
 
-- **Gene** (top of the page) — switches the map, year range, tree, and networks.
+- **Genetic Diversity** menu (top of the page) — chooses which gene's data (COI by default) drives the map, year range, tree, and networks.
+- **Dispersal Network** and **Haplotype Network** — the phylogeographic dispersal network (StrainHub) and the country haplotype-sharing network, on separate tabs. In the haplotype network, dashed red edges were found in fewer than 95% of 1,000 repeated subsamples.
 - **Pie charts** — one per collection site, split by haplotype. Click one for a breakdown; with Shipping Routes on, that country's routes turn red.
 - **Show on map** (above the map) — Haplotype (the pie charts), WGS or ddRAD. The WGS and ddRAD layers draw a circle per location, coloured yellow→red by nucleotide diversity (π); click one for its π, Tajima's D, Fst and sample counts. The temporal filter applies to haplotypes only.
 - **Phylogenetic tree** — scroll or use + / − to zoom, drag to pan.

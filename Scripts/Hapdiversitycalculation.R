@@ -10,6 +10,9 @@
 ##    edge weight ranges, and the distribution of Hd across iterations.
 ## 4. Calculates rarefied Hd (equal n per country) as a sensitivity check.
 ## 5. Tests whether network connectivity tracks sequence count per country.
+## 6. Draws the country haplotype-sharing network with edge stability: edges
+##    recovered in fewer than 95% of the subsamples are dashed red. Saved as an
+##    interactive HTML page plus a CSV of per-edge recovery.
 ##
 ## Edit the CONFIG block if needed, then run the whole script.
 ## ---------------------------------------------------------------------------
@@ -32,6 +35,12 @@ rarefy_n    <- 10                             # equal n per country for rarefied
 min_n_hd    <- 2                              # Hd is undefined below this n
 seed        <- 123
 out_dir     <- "via_sensitivity_output"
+## Network with edge stability (section 6)
+stable_cut  <- 0.95                           # edges recovered in at least this share of subsamples are solid
+base_seed   <- 123                            # seed for the displayed subsample (the dashboard's network)
+iter_seed   <- 2026                           # seed for the repeated subsamples
+out_html    <- "An_stephensi_Connectivity_with_Recovery.html"
+out_csv     <- "network_edge_recovery.csv"
 ## ---------------------------------------------------------------------------
 
 set.seed(seed)
@@ -213,5 +222,116 @@ cat("Spearman correlation, sequences per country vs mean total shared haplotypes
     round(cor_shared$estimate, 2), " p =", signif(cor_shared$p.value, 3), "\n")
 
 write.csv(conn, file.path(out_dir, "connectivity_vs_sample_size.csv"), row.names = FALSE)
+
+## ---- 6. Country network with edge stability --------------------------------
+## The country haplotype-sharing network, with each edge styled by how often it
+## reappears across repeated subsamples: solid grey edges were recovered in at
+## least `stable_cut` of them, dashed red edges in fewer. Uses the tidy data
+## above and the CONFIG settings. The repeats here use `iter_seed`, so the
+## recovery values differ slightly from section 3 (which uses `seed`); the
+## network figure uses these.
+library(visNetwork)
+library(igraph)
+
+shared_matrix <- function(df) {
+  H <- make_H(df)
+  C <- t(H) %*% H                  # shared unique haplotypes between countries
+  diag(C) <- 0
+  C
+}
+
+## The displayed subsample: same seed and steps as the dashboard's network.
+set.seed(base_seed)
+dat_displayed <- subsample_once(dat)
+base_matrix   <- shared_matrix(dat_displayed)
+
+## Repeated subsamples, with their own seed.
+set.seed(iter_seed)
+net_weights <- array(0, dim = c(k, k, n_iter),
+                     dimnames = list(countries, countries, NULL))
+cat("Running", n_iter, "subsampling iterations for edge stability...\n")
+for (i in seq_len(n_iter)) {
+  net_weights[, , i] <- shared_matrix(subsample_once(dat))
+}
+
+net_edges <- data.frame(
+  country_a     = countries[pairs[, 1]],
+  country_b     = countries[pairs[, 2]],
+  base_weight   = base_matrix[pairs],
+  recovery      = apply(net_weights, c(1, 2), function(x) mean(x > 0))[pairs],
+  weight_median = apply(net_weights, c(1, 2), median)[pairs],
+  weight_min    = apply(net_weights, c(1, 2), min)[pairs],
+  weight_max    = apply(net_weights, c(1, 2), max)[pairs],
+  stringsAsFactors = FALSE
+) |>
+  filter(base_weight > 0 | recovery > 0) |>
+  arrange(desc(recovery), desc(weight_median))
+
+write.csv(net_edges, file.path(out_dir, out_csv), row.names = FALSE)
+cat("Edge table written to", file.path(out_dir, out_csv), "\n")
+
+## Nodes: size = sequences in the displayed subsample.
+n_full <- dat           |> count(country, name = "n_full")
+n_sub  <- dat_displayed |> count(country, name = "n_sub")
+
+net_nodes <- data.frame(country = countries, stringsAsFactors = FALSE) |>
+  left_join(n_full, by = "country") |>
+  left_join(n_sub,  by = "country") |>
+  mutate(id    = country,
+         label = paste0(country, " (n = ", n_sub, ")"),
+         group = country,
+         value = n_sub,
+         title = paste0("<b>", country, "</b><br>Sequences in displayed subsample: ", n_sub,
+                        "<br>Sequences in full dataset: ", n_full))
+
+## Edges shown are those in the displayed subsample, styled by stability.
+net_links <- net_edges |>
+  filter(base_weight > 0) |>
+  transmute(
+    from   = country_a,
+    to     = country_b,
+    value  = base_weight,                    # thickness = shared haplotypes
+    dashes = recovery < stable_cut,
+    color  = ifelse(recovery < stable_cut, "rgba(200,60,40,0.85)", "rgba(100,100,100,0.45)"),
+    title  = paste0("Shared haplotypes (displayed subsample): ", base_weight,
+                    "<br>Median across subsamples: ", weight_median,
+                    " (range ", weight_min, " to ", weight_max, ")",
+                    "<br>Recovered in ", round(100 * recovery, 1), "% of subsamples")
+  )
+
+## Node colours by country (both spellings of Saudi Arabia, as the data and the
+## older figures differ).
+node_colours <- c(Afghanistan = "#CD9B1D", Djibouti = "#00008B", Ethiopia = "#009ACD",
+                  India = "#EE9A00", Iran = "#CD853F", Kenya = "#6CA6CD", Niger = "#7CCD7C",
+                  Pakistan = "#EEDC82", SaudiArabia = "#556B2F", "Saudi Arabia" = "#556B2F",
+                  Somalia = "#BCD2EE", "Sri Lanka" = "#BFEFFF", Sudan = "#1874CD",
+                  "United Arab Emirates" = "#FF7F00", Yemen = "#4169E1")
+
+legend_edges <- data.frame(
+  label  = c(paste0("Stable (>= ", 100 * stable_cut, "%)"),
+             paste0("Less stable (< ", 100 * stable_cut, "%)")),
+  color  = c("rgba(100,100,100,0.6)", "rgba(200,60,40,0.9)"),
+  dashes = c(FALSE, TRUE),
+  stringsAsFactors = FALSE
+)
+
+net_vis <- visNetwork(net_nodes, net_links,
+                      main    = "An. stephensi: Country Connectivity",
+                      submain = paste0("Edges show shared haplotypes in one random subsample; ",
+                                       "dashed red edges appeared in fewer than ",
+                                       100 * stable_cut, "% of ", n_iter, " subsamples")) |>
+  visIgraphLayout(layout = "layout_with_fr", randomSeed = 123) |>
+  visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE) |>
+  visEdges(smooth = TRUE) |>
+  visPhysics(solver = "forceAtlas2Based", stabilization = TRUE) |>
+  visLegend(addEdges = legend_edges, useGroups = FALSE, addNodes = NULL,
+            main = "Edge stability", zoom = FALSE)
+
+for (g in names(node_colours)) {
+  net_vis <- visGroups(net_vis, groupname = g, color = node_colours[[g]])
+}
+
+visSave(net_vis, file = file.path(out_dir, out_html))
+cat("Network saved to", file.path(out_dir, out_html), "\n")
 
 cat("\nDone. Outputs written to:", normalizePath(out_dir), "\n")

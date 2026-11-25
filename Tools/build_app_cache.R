@@ -314,31 +314,73 @@ build_strainhub <- function(md, tree_file) {
   list(nodes = nodes, edges = edges)
 }
 
-build_country_net <- function(md) {
+# Haplotype-sharing network between countries, with edge stability. The drawn
+# network is one random subsample (up to `cap` sequences per country-year, seed
+# 123). An edge's stability is how often it reappears across `n_iter` repeated
+# subsamples (seed 2026); edges seen in fewer than `stable_cut` of them are
+# dashed red. Same method as Scripts/Hapdiversitycalculation.R, section 6.
+build_country_net <- function(md, cap = 20, n_iter = 1000, stable_cut = 0.95,
+                              base_seed = 123, iter_seed = 2026) {
   clean <- md %>%
     filter(!is.na(Country),   Country   != "", Country   != "NA",
            !is.na(Haplotype), Haplotype != "", Haplotype != "NA")
+  countries <- sort(unique(clean$Country))   # fixed node order for every subsample
+  k <- length(countries)
 
-  set.seed(123)
-  sub <- clean %>% group_by(Country, Year) %>% slice_sample(n = 20) %>% ungroup()
+  subsample <- function(df) {
+    df %>% group_by(Country, Year) %>% slice_sample(n = cap) %>% ungroup()
+  }
+  shared <- function(df) {   # shared unique haplotypes between countries
+    H <- (unclass(table(factor(df$Haplotype), factor(df$Country, levels = countries))) > 0) * 1
+    C <- t(H) %*% H
+    diag(C) <- 0
+    C
+  }
 
-  hb <- table(sub$Haplotype, sub$Country); hb[hb > 0] <- 1
-  cm <- as.matrix(t(hb) %*% hb); diag(cm) <- 0
+  set.seed(base_seed)
+  displayed <- subsample(clean)
+  base      <- shared(displayed)
 
-  totals <- sub %>% count(Country, name = "n")
-  nodes <- data.frame(id = seq_len(nrow(totals)), label = totals$Country,
-                      group = totals$Country, value = totals$n,
-                      title = paste("Included Samples:", totals$n))
-  idx <- which(cm > 0, arr.ind = TRUE)
-  idx <- idx[idx[, 1] < idx[, 2], , drop = FALSE]
-  links <- data.frame(from = idx[, 1], to = idx[, 2], value = cm[idx])
+  set.seed(iter_seed)
+  weights <- array(0, dim = c(k, k, n_iter), dimnames = list(countries, countries, NULL))
+  for (i in seq_len(n_iter)) weights[, , i] <- shared(subsample(clean))
 
-  # Bake the igraph layout in here, so the server needs no igraph. The app used
-  # visLayout(randomSeed = 1), which seeds vis.js, not igraph — so the layout
-  # was different on every R session. randomSeed below fixes it.
+  pairs <- which(upper.tri(matrix(0, k, k)), arr.ind = TRUE)
+  over  <- function(f) apply(weights, c(1, 2), f)[pairs]
+  edges <- data.frame(
+    from = countries[pairs[, 1]], to = countries[pairs[, 2]],
+    base = base[pairs], recovery = over(function(x) mean(x > 0)),
+    med = over(median), lo = over(min), hi = over(max),
+    stringsAsFactors = FALSE
+  ) %>% filter(base > 0)   # only edges in the displayed subsample are drawn
+
+  links <- edges %>%
+    transmute(
+      from, to,
+      value  = base,                          # thickness = shared haplotypes
+      dashes = recovery < stable_cut,
+      color  = ifelse(recovery < stable_cut, "rgba(200,60,40,0.85)", "rgba(100,100,100,0.45)"),
+      title  = paste0("Shared haplotypes (displayed subsample): ", base,
+                      "<br>Median across subsamples: ", med, " (range ", lo, " to ", hi, ")",
+                      "<br>Recovered in ", round(100 * recovery, 1), "% of subsamples")
+    )
+
+  n_full <- clean     %>% count(Country, name = "n_full")
+  n_sub  <- displayed %>% count(Country, name = "n_sub")
+  nodes <- data.frame(Country = countries, stringsAsFactors = FALSE) %>%
+    left_join(n_full, by = "Country") %>%
+    left_join(n_sub,  by = "Country") %>%
+    mutate(id    = Country,
+           label = paste0(Country, " (n = ", n_sub, ")"),
+           group = Country,
+           value = n_sub,                     # node size = sequences in the subsample
+           title = paste0("<b>", Country, "</b><br>Sequences in displayed subsample: ", n_sub,
+                          "<br>Sequences in full dataset: ", n_full))
+
+  # Bake the igraph layout in here, so the server needs no igraph.
   laid <- visNetwork::visNetwork(nodes, links) %>%
-    visNetwork::visIgraphLayout(layout = "layout_nicely", randomSeed = 1)
-  list(nodes = laid$x$nodes, links = links)
+    visNetwork::visIgraphLayout(layout = "layout_with_fr", randomSeed = 123)
+  list(nodes = laid$x$nodes, links = links, n_iter = n_iter, stable_cut = stable_cut)
 }
 
 # ================================================================================

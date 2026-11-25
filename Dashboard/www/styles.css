@@ -339,11 +339,14 @@ table.dataTable.table-striped tbody tr:nth-child(odd) {
 }
 
 .map-banner p {
-  margin: 0;
+  margin: 0 0 0.5rem;
   font-size: 0.875rem;
   line-height: 1.6;
   color: rgba(255, 255, 255, 0.88);
-  max-width: 78ch;
+}
+
+.map-banner p:last-of-type {
+  margin-bottom: 0;
 }
 
 .map-banner em {
@@ -362,7 +365,6 @@ table.dataTable.table-striped tbody tr:nth-child(odd) {
   font-size: 0.8rem;
   line-height: 1.55;
   color: rgba(255, 255, 255, 0.72);
-  max-width: 88ch;
 }
 
 .map-banner .banner-hint strong {
@@ -579,4 +581,24 @@ table.dataTable.table-striped tbody tr:nth-child(odd) {
 .about-card .help-text {
   font-size: inherit;
   color: inherit;
+}
+
+/* "Genetic Diversity" selector in the navbar */
+.gene-select {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 6px 10px;
+}
+
+.gene-select label {
+  margin: 0;
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.gene-select .form-group {
+  margin-bottom: 0;
 }

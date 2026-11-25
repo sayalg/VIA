@@ -13,11 +13,11 @@ AfkH4_Afghanistan,ERR13695730,AfkH4,2015,Afghanistan,Major,Native,34.8466,71.097
 AfNA1_Afghanistan,ERR13695731,AfNA1,2015,Afghanistan,Major,Native,34.1718,70.6217,Nangarhar,Nangarhar,Hap1,Urban,NA,Immature
 AfNA2_Afghanistan,ERR13695732,AfNA2,2015,Afghanistan,Major,Native,34.1718,70.6217,Nangarhar,Nangarhar,Hap1,Urban,NA,Immature
 AfNC4_Afghanistan,ERR13695733,AfNC4,2015,Afghanistan,Major,Native,34.1718,70.6217,Nangarhar,Nangarhar,Hap1,Urban,NA,Immature
-AfNC7_Afghanistan,ERR13695734,AfNC7,2015,Afghanistan,Major,Native,34.1718,70.6217,Nangarhar,Nangarhar,Hap23,Urban,NA,Immature
+AfNC7_Afghanistan,ERR13695734,AfNC7,2015,Afghanistan,Major,Native,34.1718,70.6217,Nangarhar,Nangarhar,Hap21,Urban,NA,Immature
 AfND7_Afghanistan,ERR13695736,AfND7,2015,Afghanistan,Major,Native,34.1718,70.6217,Nangarhar,Nangarhar,Hap1,Urban,NA,Immature
 AfND8_Afghanistan,ERR13695737,AfND8,2015,Afghanistan,Major,Native,34.1718,70.6217,Nangarhar,Nangarhar,Hap1,Urban,NA,Immature
 AfNE1_Afghanistan,ERR13695738,AfNE1,2015,Afghanistan,Major,Native,34.1718,70.6217,Nangarhar,Nangarhar,Hap1,Urban,NA,Immature
-AfNE6_Afghanistan,ERR13695739,AfNE6,2015,Afghanistan,Major,Native,34.1718,70.6217,Nangarhar,Nangarhar,Hap24,Urban,NA,Immature
+AfNE6_Afghanistan,ERR13695739,AfNE6,2015,Afghanistan,Major,Native,34.1718,70.6217,Nangarhar,Nangarhar,Hap22,Urban,NA,Immature
 AfNE7_Afghanistan,ERR13695740,AfNE7,2015,Afghanistan,Major,Native,34.1718,70.6217,Nangarhar,Nangarhar,Hap1,Urban,NA,Immature
 AfNF1_Afghanistan,ERR13695741,AfNF1,2015,Afghanistan,Major,Native,34.1718,70.6217,Nangarhar,Nangarhar,Hap1,Urban,NA,Immature
 AfNF2_Afghanistan,ERR13695742,AfNF2,2015,Afghanistan,Major,Native,34.1718,70.6217,Nangarhar,Nangarhar,Hap1,Urban,NA,Immature
@@ -37,7 +37,7 @@ DJ1046_Djibouti,NA,DJ1046,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djib
 DJ1047_Djibouti,NA,DJ1047,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap3,Urban,Artifical,Immature
 DJ1048_Djibouti,NA,DJ1048,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap4,Urban,Artifical,Immature
 DJ1049_Djibouti,NA,DJ1049,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap4,Urban,Artifical,Immature
-DJ1050_Djibouti,NA,DJ1050,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap21,Urban,Artifical,Immature
+DJ1050_Djibouti,NA,DJ1050,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap20,Urban,Artifical,Immature
 DJ1051_Djibouti,NA,DJ1051,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap20,Urban,Artifical,Immature
 DJ1052_Djibouti,NA,DJ1052,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap1,Urban,Artifical,Immature
 DJ1053_Djibouti,NA,DJ1053,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap2,Urban,Artifical,Immature
@@ -79,7 +79,7 @@ DJ1126_Djibouti,NA,DJ1126,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djib
 DJ1127_Djibouti,NA,DJ1127,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap3,Urban,Artifical,Immature
 DJ1128_Djibouti,NA,DJ1128,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap2,Urban,Artifical,Immature
 DJ1129_Djibouti,NA,DJ1129,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap2,Urban,Artifical,Immature
-DJ1130_Djibouti,NA,DJ1130,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap22,Urban,Artifical,Immature
+DJ1130_Djibouti,NA,DJ1130,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap18,Urban,Artifical,Immature
 DJ1131_Djibouti,NA,DJ1131,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap18,Urban,Artifical,Immature
 DJ1135_Djibouti,NA,DJ1135,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap2,Urban,Artifical,Immature
 DJ1136_Djibouti,NA,DJ1136,2019,Djibouti,Major,Invasive,11.56239,43.12923,NA,Djibouti City,Hap2,Urban,Artifical,Immature
@@ -165,7 +165,7 @@ Djib_F_22_Djibouti,ERR13818198,Djib_F_22,2023,Djibouti,Major,Invasive,11.8251,42
 Djib_F_26_Djibouti,ERR13818201,Djib_F_26,2023,Djibouti,Major,Invasive,11.8251,42.5903,Djibouti City,Djibouti City,Hap2,Rural,NA,Adult
 Djib_F_27_Djibouti,ERR13818202,Djib_F_27,2023,Djibouti,Major,Invasive,11.8251,42.5903,Djibouti City,Djibouti City,Hap2,Rural,NA,Adult
 Djib_F_29_Djibouti,ERR13818204,Djib_F_29,2023,Djibouti,Major,Invasive,11.8251,42.5903,Djibouti City,Djibouti City,Hap2,Rural,NA,Adult
-A268_Ethiopia,MH651000,A268,2018,Ethiopia,Major,Invasive,6.733333,44.266667,Somali,Kebridehar,Hap2,Urban,Water reservoir,Immature
+A268_Ethiopia,MH651000,A268,2016,Ethiopia,Major,Invasive,6.733333,44.266667,Somali,Kebridehar,Hap2,Urban,Water reservoir,Immature
 AW002_Ethiopia,NA,AW002,2018,Ethiopia,Major,Invasive,8.989,40.164,Afar,Awash Sebat Kilo,Hap2,Urban,Artificial,Immature
 AW007_Ethiopia,NA,AW007,2018,Ethiopia,Major,Invasive,8.989,40.164,Afar,Awash Sebat Kilo,Hap2,Urban,Artificial,Immature
 AW011_Ethiopia,NA,AW011,2018,Ethiopia,Major,Invasive,8.989,40.164,Afar,Awash Sebat Kilo,Hap3,Urban,Artificial,Immature
@@ -572,7 +572,7 @@ I3_59_1_Iran,ERR14101180,I3_59_1,2023,Iran,Major,Native,27.4081975,62.2730037,Si
 I3_59_2_Iran,ERR14101181,I3_59_2,2023,Iran,Major,Native,27.4081975,62.2730037,Sistan and Baluchestan,Saravan,Hap10,Rural,NA,NA
 I3_59_3_Iran,ERR14101182,I3_59_3,2023,Iran,Major,Native,27.4081975,62.2730037,Sistan and Baluchestan,Saravan,Hap1,Rural,NA,NA
 I3_59_4_Iran,ERR14101183,I3_59_4,2023,Iran,Major,Native,27.4081975,62.2730037,Sistan and Baluchestan,Saravan,Hap1,Rural,NA,NA
-I3_59_5_Iran,ERR14101184,I3_59_5,2023,Iran,Major,Native,27.4081975,62.2730037,Sistan and Baluchestan,Saravan,Hap26,Rural,NA,NA
+I3_59_5_Iran,ERR14101184,I3_59_5,2023,Iran,Major,Native,27.4081975,62.2730037,Sistan and Baluchestan,Saravan,Hap24,Rural,NA,NA
 I3_60_1_Iran,ERR14101185,I3_60_1,2023,Iran,Major,Native,27.4081975,62.2730037,Sistan and Baluchestan,Saravan,Hap1,Rural,NA,NA
 I3_60_2_Iran,ERR14101186,I3_60_2,2023,Iran,Major,Native,27.4081975,62.2730037,Sistan and Baluchestan,Saravan,Hap1,Rural,NA,NA
 I3_60_3_Iran,ERR14101187,I3_60_3,2023,Iran,Major,Native,27.4081975,62.2730037,Sistan and Baluchestan,Saravan,Hap1,Rural,NA,NA
@@ -667,7 +667,7 @@ PMJDE4_Pakistan,ERR13695750,PMJDE4,2005,Pakistan,Major,Native,34.0177922,71.8785
 PMJDF4_Pakistan,ERR13695751,PMJDF4,2005,Pakistan,Major,Native,34.0177922,71.8785862,KhyberPakhtunkhwa,Azakhel,Hap1,Rural,NA,Adult
 PMJDG2_Pakistan,ERR13695752,PMJDG2,2005,Pakistan,Major,Native,34.0177922,71.8785862,KhyberPakhtunkhwa,Azakhel,Hap1,Rural,NA,Adult
 PMJDG4_Pakistan,ERR13695754,PMJDG4,2005,Pakistan,Major,Native,34.0177922,71.8785862,KhyberPakhtunkhwa,Azakhel,Hap1,Rural,NA,Adult
-PMJDH2_Pakistan,ERR13695755,PMJDH2,2005,Pakistan,Major,Native,34.0177922,71.8785862,KhyberPakhtunkhwa,Azakhel,Hap25,Rural,NA,Adult
+PMJDH2_Pakistan,ERR13695755,PMJDH2,2005,Pakistan,Major,Native,34.0177922,71.8785862,KhyberPakhtunkhwa,Azakhel,Hap23,Rural,NA,Adult
 PMJDH3_Pakistan,ERR13695756,PMJDH3,2005,Pakistan,Major,Native,34.1718,71.8785862,KhyberPakhtunkhwa,Azakhel,Hap1,Rural,NA,Adult
 QAzCPak030_Pakistan,ERR13667079,QAzCPak030,2005,Pakistan,Major,Native,34.0177922,71.8785862,KhyberPakhtunkhwa,Azakhel,Hap1,Rural,NA,Adult
 QAzCPak062_Pakistan,ERR13667080,QAzCPak062,2005,Pakistan,Major,Native,34.0177922,71.8785862,KhyberPakhtunkhwa,Azakhel,Hap1,Rural,NA,Adult
@@ -1451,25 +1451,25 @@ S220852_Yemen,NA,S220852,2021,Yemen,Major,Invasive,13.05807429,44.88331316,Lahj,
 S220853_Yemen,NA,S220853,2021,Yemen,Major,Invasive,13.05807429,44.88331316,Lahj,Tuban,Hap3,Urban,Artificial,Immature
 S220855_Yemen,NA,S220855,2021,Yemen,Major,Invasive,13.05807429,44.88331316,Lahj,Tuban,Hap3,Urban,Artificial,Immature
 YemH1_Yemen,OM865140,YemH1,2021,Yemen,Major,Invasive,16.3471243,47.8915271,Aden,NA,Hap2,Urban ,Artificial,Immature
-S220831_Yemen,NA,S220831,2022,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artifical,Immature
-S220833_Yemen,NA,S220833,2022,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
-S220834_Yemen,NA,S220834,2022,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
-S220835_Yemen,NA,S220835,2022,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
-S220836_Yemen,NA,S220836,2022,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
-S220837_Yemen,NA,S220837,2022,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
-S220838_Yemen,NA,S220838,2022,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
-S220839_Yemen,NA,S220839,2022,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
-S220840_Yemen,NA,S220840,2022,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
-S220841_Yemen,NA,S220841,2022,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artifical,Immature
-S220842_Yemen,NA,S220842,2022,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
-S220843_Yemen,NA,S220843,2022,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
-S220844_Yemen,NA,S220844,2022,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
-S220845_Yemen,NA,S220845,2022,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
-S220846_Yemen,NA,S220846,2022,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
-S220847_Yemen,NA,S220847,2022,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
-S220848_Yemen,NA,S220848,2022,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
-S220849_Yemen,NA,S220849,2022,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
-S220850_Yemen,NA,S220850,2022,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
+S220831_Yemen,NA,S220831,2021,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artifical,Immature
+S220833_Yemen,NA,S220833,2021,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
+S220834_Yemen,NA,S220834,2021,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
+S220835_Yemen,NA,S220835,2021,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
+S220836_Yemen,NA,S220836,2021,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
+S220837_Yemen,NA,S220837,2021,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
+S220838_Yemen,NA,S220838,2021,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
+S220839_Yemen,NA,S220839,2021,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
+S220840_Yemen,NA,S220840,2021,Yemen,Major,Invasive,15.202806,51.20175,Al Mahra,Sayhut,Hap3,Urban,Artificial,Immature
+S220841_Yemen,NA,S220841,2021,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artifical,Immature
+S220842_Yemen,NA,S220842,2021,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
+S220843_Yemen,NA,S220843,2021,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
+S220844_Yemen,NA,S220844,2021,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
+S220845_Yemen,NA,S220845,2021,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
+S220846_Yemen,NA,S220846,2021,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
+S220847_Yemen,NA,S220847,2021,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
+S220848_Yemen,NA,S220848,2021,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
+S220849_Yemen,NA,S220849,2021,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
+S220850_Yemen,NA,S220850,2021,Yemen,Major,Invasive,13.841611,47.59567,Shabwah,Rodoom,Hap3,Rural,Artificial,Immature
 Yem002_Yemen,ERR13695910,Yem002,2023,Yemen,Major,Invasive,12.79,45.02,Aden City,Aden,Hap3,Urban,NA,Adult
 Yem006_Yemen,ERR13695911,Yem006,2023,Yemen,Major,Invasive,12.79,45.02,Aden City,Aden,Hap3,Urban,NA,Adult
 Yem008_Yemen,ERR13695912,Yem008,2023,Yemen,Major,Invasive,12.79,45.02,Aden City,Aden,Hap3,Urban,NA,Adult
